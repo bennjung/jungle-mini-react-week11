@@ -1,4 +1,3 @@
-import { matchChildren } from './match';
 import type {
   DiffCommand,
   UpdateData,
@@ -9,7 +8,9 @@ import type {
 } from './types';
 
 /**
- * 정렬된 Diff 명령을 실제 DOM에 적용하고, 다음 VDOM 전체의 dom 참조를 연결한다.
+ * 정렬된 Diff 명령을 실제 DOM에 적용하고 전체 연결을 검증한다.
+ * diff가 유지 노드의 dom 참조를 연결한 상태를 전제로 하며,
+ * insert/replace 노드만 renderNode()가 새 DOM을 생성·연결한다.
  * History 저장은 하지 않는다.
  */
 export function applyPatch(
@@ -20,23 +21,12 @@ export function applyPatch(
   const actualRoot = prevRoot.dom;
   if (!actualRoot) throw new Error('prevRoot.dom is not linked');
 
-  linkMatchedDom(prevRoot, nextRoot);
-
   for (const change of changes) {
     applyChange(change);
   }
 
   assertAllLinked(nextRoot, actualRoot);
   return nextRoot;
-}
-
-/**
- * 유지·이동 노드의 이전 실제 DOM 참조를 다음 VDOM에 연결한다.
- * 새 삽입·교체 노드는 renderNode가 연결할 때까지 null로 둔다.
- */
-export function linkMatchedDom(prev: VRoot, next: VRoot): void {
-  next.dom = requireElementDom(prev, 'link previous root');
-  linkChildren(prev.childNodes, next.childNodes);
 }
 
 /**
@@ -93,31 +83,6 @@ export function assertAllLinked(root: VRoot, actualRoot: Element): void {
   for (const child of root.childNodes) {
     assertSubtreeLinked(child, actualRoot);
   }
-}
-
-// 같은 부모의 자식 쌍을 matchChildren()으로 찾아 재귀적으로 연결한다.
-function linkChildren(prevChildren: VNode[], nextChildren: VNode[]): void {
-  const { pairs } = matchChildren(prevChildren, nextChildren);
-
-  for (const { prev, next } of pairs) {
-    linkNode(prev, next);
-  }
-}
-
-// 같은 type/tag 쌍만 기존 dom을 복사한다. replace 대상은 건너뛴다.
-function linkNode(prev: VNode, next: VNode): void {
-  if (!isLinkablePair(prev, next)) return;
-
-  next.dom = requireDom(prev, 'link previous node');
-
-  if (next.nodeType === 1) {
-    linkChildren(prev.childNodes, next.childNodes);
-  }
-}
-
-function isLinkablePair(prev: VNode, next: VNode): boolean {
-  if (prev.nodeType !== next.nodeType) return false;
-  return prev.nodeType === 3 || prev.tagName === next.tagName;
 }
 
 // 변경 명령 하나를 해당 실제 DOM 연산으로 분기한다.

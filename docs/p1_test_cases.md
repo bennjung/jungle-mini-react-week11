@@ -5,7 +5,7 @@
 - 요구사항 원문: [resc/phase1.md](../resc/phase1.md).
 - 이번 재작성 기준: [p1_function_flow.md](p1_function_flow.md)의 HTML 코드 편집기 → 임시 DOM → VDOM → Diff → 실제 화면 Patch 흐름.
 - 함수·타입 인터페이스는 [p1_interfaces.md](p1_interfaces.md)를 따른다.
-- 참조 연결은 이후 합의한 흐름을 따른다. 이전 VDOM만 현재 실제 DOM 참조를 가지며, 다음 VDOM은 Snapshot·Diff 종료까지 `VRoot`와 모든 `VNode`의 `dom`이 null이다. Patch에서 유지된 노드와 새 노드 모두 연결해 다음 VDOM을 완성한다. 함수 흐름 문서에 남은 Snapshot 단계의 참조 연결 설명보다 이 합의를 우선한다.
+- 참조 연결은 이후 합의한 흐름을 따른다. 이전 VDOM만 현재 실제 DOM 참조를 가진다. 다음 VDOM은 Snapshot 종료 시 `VRoot`와 모든 `VNode`의 `dom`이 null이다. Diff가 `VRoot`와 유지·이동·수정 노드를 연결하고, Patch가 insert/replace 노드를 연결해 다음 VDOM을 완성한다. 함수 흐름 문서에 남은 Snapshot 단계의 참조 연결 설명보다 이 합의를 우선한다.
 - 테스트 영역은 HTML 문자열을 편집하는 공간이다. 요구사항 원문의 “테스트 영역 렌더링”은 이 HTML 문자열 편집기로 해석한다. 렌더링된 테스트 DOM을 직접 수정하는 방식이나 `testDom`·WeakMap 기반 매핑은 검증 기준에서 제외한다.
 - 이 문서는 테스트 명세다. 테스트 코드 작성·실행 결과를 의미하지 않는다. Phase 2는 포함하지 않는다.
 - 요소의 `attributes`에 이름이 `key`인 속성이 있으면 그 값을 식별자로 사용한다. key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다. 중복 key 오류, key 변경, 같은 key의 태그 변경 정책은 아직 미확정이며 마지막의 확인 필요 케이스에 둔다.
@@ -105,14 +105,14 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 - **기대 결과:** 각 속성의 이름·값이 attributes에 저장된다. 새로운 `data-extra`를 수집하기 위한 속성별 전용 분기가 필요하지 않다.
 - **유지 조건:** class·title 같은 기존 속성도 함께 유지하며, 수집 과정은 실제 DOM을 수정하지 않는다.
 
-### SNAP-05 — 다음 VDOM은 기존·새 노드 구분 없이 Patch 전까지 실제 DOM 참조가 없다
+### SNAP-05 — 다음 VDOM은 기존·새 노드 구분 없이 Diff 전까지 실제 DOM 참조가 없다
 
 - **대상 / 범위:** `createSnapshot()`의 참조 미연결 상태.
 - **사전 상태:** 기존 `<p>A</p>`의 VDOM과 실제 p·텍스트 참조가 연결되어 있다. 이번 입력에서도 대응하는 p와 텍스트가 유지되는 상황이다.
 - **입력·행동:** 별도로 파싱한 `<p>B</p><span>C</span>`에서 다음 VDOM을 만든다.
 - **검증 시점:** `createSnapshot()` 종료 직후, Diff·Patch 전.
 - **기대 결과:** 다음 VDOM의 p·텍스트·새 span·하위 노드와 `VRoot`까지 모든 `dom`이 null이다. 이전 VDOM의 참조를 이어받거나 임시 DOM을 실제 DOM 참조로 저장하지 않는다.
-- **유지 조건:** 기존 실제 화면은 A이며 이전 VDOM의 비교용 데이터와 실제 DOM 참조도 유지한다. 참조 연결은 Patch 단계에서만 수행한다.
+- **유지 조건:** 기존 실제 화면은 A이며 이전 VDOM의 비교용 데이터와 실제 DOM 참조도 유지한다. Snapshot 단계에서는 참조를 연결하지 않으며, 연결은 Diff와 Patch 단계에서 수행한다.
 
 ### SNAP-06 — HTML에서 입력값·체크·선택 상태를 properties로 수집한다
 
@@ -125,16 +125,16 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ## 5. Diff — 입력과 실제 DOM을 수정하지 않고 필요한 변경 명령 계산
 
-이 절은 `diff()`만 실행한다. 이전 VDOM에는 실제 DOM 참조가 있고 다음 VDOM의 `VRoot`와 모든 `VNode`의 `dom`은 null인 상태로 시작한다. Diff 종료 후에도 이 상태를 유지한다. 실제 DOM 반영과 다음 VDOM의 참조 연결은 7절에서 검증한다. key가 있는 요소는 같은 key로, key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다.
+이 절은 `diff()`만 실행한다. 이전 VDOM에는 실제 DOM 참조가 있고 다음 VDOM의 `VRoot`와 모든 `VNode`의 `dom`은 null인 상태로 시작한다. Diff 종료 시 `VRoot`와 유지·이동·수정 노드는 실제 DOM 참조가 연결되고, insert/replace 노드는 null로 남는다. 실제 DOM은 변경하지 않는다. 실제 DOM 반영과 insert/replace의 참조 연결은 7절에서 검증한다. key가 있는 요소는 같은 key로, key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다.
 
-### DIFF-01 — 같은 HTML을 다시 파싱해도 변경 명령은 없고 입력 VDOM·DOM은 유지된다
+### DIFF-01 — 같은 HTML을 다시 파싱해도 변경 명령은 없고 prev VDOM·실제 DOM은 유지된다
 
 - **대상 / 범위:** `diff(prev, next)` 단독.
 - **사전 상태:** 서로 다른 파싱 결과지만 데이터가 같은 `<p key="p1">A</p>`의 VDOM 두 개를 준비한다. prev는 현재 실제 DOM에 연결되어 있다.
 - **입력·행동:** 두 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
 - **기대 결과:** 빈 배열을 반환한다. 파싱 때 새 DOM 객체가 만들어졌다는 이유로 replace·insert 명령을 만들지 않는다.
-- **유지 조건:** prev·next의 데이터와 참조 필드, 실제 DOM, History는 비교 전과 같다.
+- **유지 조건:** prev 데이터·실제 DOM·History는 비교 전과 같다. next는 데이터가 유지되고, Diff 종료 시 유지 노드의 `dom`이 실제 DOM 참조로 연결된다.
 
 ### DIFF-02 — 텍스트만 바뀌면 요소 교체 없이 텍스트 update 명령을 반환한다
 
@@ -161,7 +161,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 - **입력·행동:** 두 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
 - **기대 결과:** 기존 대상과 새 VDOM을 담은 replace가 나온다. 교체로 대체되는 하위 트리에 불필요한 별도 변경 명령을 만들지 않는다.
-- **유지 조건:** 실제 DOM과 입력 VDOM은 아직 수정되지 않는다.
+- **유지 조건:** 실제 DOM과 이전 VDOM은 수정되지 않는다. 교체 대상 next 노드의 `dom`은 null로 남는다.
 
 ### DIFF-05 — 입력·선택 프로퍼티의 변경을 false·빈 문자열까지 update에 담는다
 
@@ -184,33 +184,33 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 ### DIFF-07 — 같은 key를 가진 형제는 move로 대응하고 새로 만들지 않는다
 
 - **대상 / 범위:** `diff()` 단독.
-- **사전 상태:** 이전 `<ul><li key="a">A</li><li key="b">B</li></ul>`, 다음 `<ul><li key="b">B</li><li key="a">A2</li></ul>`. 이전 VDOM은 실제 DOM 참조를 가지고 다음 VDOM의 모든 `dom`은 null이다.
+- **사전 상태:** 이전 `<ul><li key="a">A</li><li key="b">B</li></ul>`, 다음 `<ul><li key="b">B</li><li key="a">A2</li></ul>`. 이전 VDOM은 실제 DOM 참조를 가지고 다음 VDOM은 Diff 시작 시 모든 `dom`이 null이다.
 - **입력·행동:** 두 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
 - **기대 결과:** key `a`·`b`로 대응한다. `b`가 `a` 앞으로 이동하는 move와 `a`의 텍스트 A→A2 update가 나온다. li를 replace·insert·remove하지 않는다.
-- **유지 조건:** 이전 VDOM 데이터·실제 DOM·History는 유지하고 다음 VDOM의 `VRoot`와 모든 `VNode`의 `dom`은 null이다.
+- **유지 조건:** 이전 VDOM 데이터·실제 DOM·History는 유지한다. Diff 종료 시 다음 VDOM의 `VRoot`와 유지·이동 노드는 실제 DOM에 연결되고, insert/replace 노드는 null로 남는다.
 
 ### DIFF-08 — key 있는 형제는 key로, key 없는 형제는 순서로 대응한다
 
 - **대상 / 범위:** `diff()` 단독.
-- **사전 상태:** 이전 `<ul><li key="a">A</li><li>B</li></ul>`, 다음 `<ul><li key="a">A2</li><li>B2</li></ul>`. 이전 VDOM은 실제 DOM 참조를 가지고 다음 VDOM의 모든 `dom`은 null이다.
+- **사전 상태:** 이전 `<ul><li key="a">A</li><li>B</li></ul>`, 다음 `<ul><li key="a">A2</li><li>B2</li></ul>`. 이전 VDOM은 실제 DOM 참조를 가지고 다음 VDOM은 Diff 시작 시 모든 `dom`이 null이다.
 - **입력·행동:** 두 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
 - **기대 결과:** key `a`인 li는 같은 key로 대응해 텍스트 A→A2 update가 나온다. key가 없는 두 번째 li는 같은 부모 안의 순서로 대응해 B→B2 update가 나온다. li를 replace·insert·remove하지 않는다.
-- **유지 조건:** 이전 VDOM 데이터·실제 DOM·History는 유지하고 다음 VDOM의 `VRoot`와 모든 `VNode`의 `dom`은 null이다.
+- **유지 조건:** 이전 VDOM 데이터·실제 DOM·History는 유지한다. Diff 종료 시 다음 VDOM의 `VRoot`와 유지·이동 노드는 실제 DOM에 연결되고, insert/replace 노드는 null로 남는다.
 
 ### DIFF-09 — key 없는 형제의 순서 변경은 move로 보장하지 않는다
 
 - **대상 / 범위:** `diff()` 단독.
-- **사전 상태:** 이전 `<ul><li>A</li><li>B</li></ul>`, 다음 `<ul><li>B</li><li>A</li></ul>`. 이전 VDOM은 실제 DOM 참조를 가지고 다음 VDOM의 모든 `dom`은 null이다.
+- **사전 상태:** 이전 `<ul><li>A</li><li>B</li></ul>`, 다음 `<ul><li>B</li><li>A</li></ul>`. 이전 VDOM은 실제 DOM 참조를 가지고 다음 VDOM은 Diff 시작 시 모든 `dom`이 null이다.
 - **입력·행동:** 두 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
 - **기대 결과:** key가 없으므로 첫 li는 첫 li와, 둘째 li는 둘째 li와 순서로 대응한다. 텍스트는 각각 A→B, B→A update가 되며 move 명령은 요구하지 않는다. li 객체는 유지될 수 있으나 순서 변경을 move로 식별하지 않는다.
-- **유지 조건:** 이전 VDOM 데이터·실제 DOM·History는 유지하고 다음 VDOM의 `VRoot`와 모든 `VNode`의 `dom`은 null이다.
+- **유지 조건:** 이전 VDOM 데이터·실제 DOM·History는 유지한다. Diff 종료 시 다음 VDOM의 `VRoot`와 유지·이동 노드는 실제 DOM에 연결되고, insert/replace 노드는 null로 남는다.
 
 ## 6. 명령 순서 — 생성·삽입·이동·제거의 참조 의존성과 중복 작업 검증
 
-기존 실제 DOM을 찾는 데 필요한 참조는 이전 VDOM에만 준비한다. 다음 VDOM의 `VRoot`와 모든 `VNode`는 정렬 종료까지 `dom`이 null이며, 실제 DOM 참조 해석·연결은 Patch에서 수행한다. key가 있는 요소는 같은 key로, key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다. 특정한 유일 순서나 최소 명령 개수보다는 참조 유효성과 최종 결과를 확인한다.
+기존 실제 DOM을 찾는 데 필요한 참조는 이전 VDOM에 준비한다. 다음 VDOM은 Diff 시작 시 `dom`이 null이며, Diff가 유지·이동·수정 노드를 연결하고 Patch가 insert/replace 노드를 연결한다. ORDER 테스트에서 `applyPatch()`를 직접 호출할 때는 `linkMatchedDom()`으로 Diff의 연결 상태를 준비한다. key가 있는 요소는 같은 key로, key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다. 특정한 유일 순서나 최소 명령 개수보다는 참조 유효성과 최종 결과를 확인한다.
 
 ### ORDER-01 — 새 기준 형제를 먼저 생성한 뒤 그 앞에 삽입해 목표 순서를 만든다
 
@@ -257,9 +257,9 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 - **기대 결과:** replace는 A 자리에서 A'로 교체한다. A'를 C 앞으로 이동하는 move가 별도로 실행된다. 최종 순서는 B → A' → C이고 B·C 실제 객체는 유지된다.
 - **유지 조건:** replace만으로 최종 위치를 맞추지 않는다. replace 대상의 위치는 현재 위치 그대로이며, 위치 변경은 move가 담당한다.
 
-## 7. Patch — 이전 VDOM 참조로 DOM을 변경하고 다음 VDOM 전체의 참조 연결 완성
+## 7. Patch — 이전 VDOM 참조로 DOM을 변경하고 새 노드 참조 연결 완성
 
-이 절의 PATCH-01–PATCH-05는 `applyPatch()`에 준비한 명령을 직접 전달한다. Diff의 식별 규칙과 실제 DOM 연산의 정확성을 분리해 검증한다.
+이 절의 PATCH-01–PATCH-05는 `linkMatchedDom()`으로 Diff의 유지 노드 연결 상태를 준비한 뒤 `applyPatch()`에 명령을 직접 전달한다. Diff의 식별 규칙과 실제 DOM 연산의 정확성을 분리해 검증한다.
 
 ### PATCH-01 — 텍스트 update는 기존 요소·텍스트 객체를 유지하며 값만 바꾼다
 
@@ -317,21 +317,21 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ### PATCH-07 — 삽입·삭제·이동·수정·교체를 함께 적용해 목표 트리와 참조를 완성한다
 
-- **대상 / 범위:** `orderChanges()` → `applyPatch()`.
-- **사전 상태:** 기존 A(key="a") → B(key="b") → C(key="c") → D(key="d") 형제의 참조를 준비하고, 새 X(key="x")와 교체할 D'를 포함한 명령을 직접 준비한다.
+- **대상 / 범위:** `orderChanges()` → `linkMatchedDom()` → `applyPatch()`.
+- **사전 상태:** 기존 A(key="a") → B(key="b") → C(key="c") → D(key="d") 형제의 참조를 준비하고, 새 X(key="x")와 교체할 D'를 포함한 명령을 직접 준비한다. `applyPatch()` 전에 `linkMatchedDom()`으로 유지 노드의 Diff 연결 상태를 준비한다.
 - **입력·행동:** B 제거, 새 X 삽입, C를 A 앞으로 이동, A 텍스트 변경, D 태그 교체를 포함해 목표 C → X → 수정된 A → 교체된 D를 만든다.
 - **검증 시점:** 정렬된 명령 전체에 대한 `applyPatch()` 종료 직후.
 - **기대 결과:** 구조·순서·텍스트·속성·properties가 목표 VDOM과 일치한다. 다음 VDOM의 유지·이동·수정·새 노드·교체 노드 모두 실제 DOM 참조가 연결된다.
 - **유지 조건:** 이동 C·수정 A는 기존 객체다. 앞 명령 때문에 뒤 명령이 다른 형제를 수정하지 않는다. 특정 최소 명령 개수는 요구하지 않는다.
 
-### PATCH-08 — 변경 없는 노드까지 연결하여 다음 VDOM 전체의 실제 DOM 참조를 완성한다
+### PATCH-08 — Diff가 연결한 유지 노드를 사용하고 새 노드까지 전체 참조를 완성한다
 
-- **대상 / 범위:** Patch 단계의 실제 DOM 반영과 다음 VDOM 참조 연결 전체.
+- **대상 / 범위:** `linkMatchedDom()` → `applyPatch()`.
 - **사전 상태:** 이전 `<div key="d1"><p key="p1">A</p><span key="sp1">유지</span></div>`의 VDOM은 실제 DOM 참조를 가진다. 다음 `<div key="d1"><p key="p1">B</p><span key="sp1">유지</span><em key="e1">추가</em></div>`의 VDOM은 `VRoot`와 모든 하위 노드의 `dom`이 null이다. 기존 div·p·span·각 텍스트 노드 참조를 보관한다.
-- **입력·행동:** 이전·다음 VDOM의 변경 명령을 Patch 단계에서 처리한다.
-- **검증 시점:** Patch 종료 직후, 이력 저장 전.
-- **기대 결과:** 실제 화면이 목표와 일치한다. 다음 VDOM의 div·p·span·각 기존 텍스트는 유지된 실제 객체에 연결되고, 새 em과 텍스트는 생성한 실제 객체에 연결된다. `VRoot`도 실제 컨테이너에 연결되어 전체 VDOM에 미연결 노드가 없다.
-- **유지 조건:** 변경 명령이 없는 span·텍스트도 연결 대상이다. 참조를 채우려고 기존 DOM을 재생성하지 않으며, 다음 VDOM의 실제 DOM 참조는 임시 파싱 노드를 가리키지 않는다. `applyPatch(prevRoot, nextRoot, changes)`와 P1-PATCH-LINK-01 A안을 따른다.
+- **입력·행동:** `linkMatchedDom()`으로 Diff의 유지 노드 연결을 수행한 뒤, 텍스트 update와 em insert 명령을 `applyPatch()`에 적용한다.
+- **검증 시점:** `linkMatchedDom()` 종료 직후와 Patch 종료 직후, 이력 저장 전.
+- **기대 결과:** `linkMatchedDom()` 후 다음 VDOM의 div·p·span·각 기존 텍스트와 `VRoot`는 유지된 실제 객체에 연결되고, 새 em과 텍스트는 null이다. `applyPatch()` 후 새 em과 텍스트가 생성한 실제 객체에 연결되어 실제 화면이 목표와 일치하고, 전체 VDOM에 미연결 노드가 없다.
+- **유지 조건:** 변경 명령이 없는 span·텍스트도 Diff 연결 대상이다. 참조를 채우려고 기존 DOM을 재생성하지 않으며, 다음 VDOM의 실제 DOM 참조는 임시 파싱 노드를 가리키지 않는다. `diff()`는 유지 노드를, `applyPatch(prevRoot, nextRoot, changes)`는 새 노드를 연결하며 P1-PATCH-LINK-02를 따른다.
 
 ## 8. 전체 Patch — 단계별 결과·연속 수정·변경 없음·실패 복구 검증
 
@@ -348,7 +348,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 | `readEditorHTML()` 반환 후 | 입력 문자열은 `<p key="p1">B</p>`, 실제 화면은 A |
 | `parseHTML()` 반환 후 | 임시 DOM의 텍스트는 B, 실제 화면은 A |
 | `createSnapshot()` 반환 후 | 다음 VDOM은 B이며 모든 dom은 null, 이전 VDOM 데이터는 A이고 실제 DOM 참조 유지 |
-| `diff()` 반환 후 | 텍스트 update 명령 존재, 실제 화면은 아직 A, 다음 VDOM의 모든 dom은 여전히 null |
+| `diff()` 반환 후 | 텍스트 update 명령 존재, 실제 화면은 아직 A, 다음 VDOM의 p·텍스트는 실제 DOM 참조 연결 완료, insert/replace 노드는 없음 |
 | `applyPatch()` 종료 후 | 실제 텍스트는 B, p·텍스트 객체 유지, 다음 VDOM 전체에 실제 DOM 참조 연결 완료, 이력 저장 단계는 아직 실행하지 않음 |
 | `handlePatch()` 종료 후 | 참조 연결이 완성된 다음 VDOM을 현재 상태로 지정하고, VDOM 데이터와 `<p key="p1">B</p>` 원문으로 새 이력 한 개 저장 |
 
@@ -368,7 +368,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 - **입력·행동:** 코드를 바꾸지 않고 Patch를 클릭한다.
 - **검증 시점:** `handlePatch()` 종료 직후.
 - **기대 결과:** Diff는 빈 배열이며 `applyPatch()`와 `saveHistory.set()`을 실행하지 않는다.
-- **유지 조건:** DOM 객체·History 길이·현재 위치는 모두 유지된다. 실제 DOM 참조를 가진 기존 현재 VDOM을 계속 사용하며, Patch를 거치지 않은 다음 VDOM을 현재 상태로 교체하지 않는다.
+- **유지 조건:** DOM 객체·History 길이·현재 위치는 모두 유지된다. 실제 DOM 참조를 가진 기존 현재 VDOM을 계속 사용하며, Diff가 참조를 연결한 다음 VDOM을 현재 상태로 교체하지 않는다.
 
 ### FLOW-04 — Patch에서 오류가 발생하면 이력을 추가하지 않고 현재 이력 위치를 유지한다
 
@@ -377,7 +377,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 - **입력·행동:** 테스트 환경에서 `applyPatch()`가 오류를 발생시키도록 하고 핸들러를 실행한다.
 - **검증 시점:** 오류가 전달되거나 처리된 직후.
 - **기대 결과:** `saveHistory.set()`을 호출하지 않고 새 이력을 저장하지 않는다.
-- **유지 조건:** 저장된 과거 데이터와 현재 이력 위치는 유지한다. 실제 DOM 롤백·오류 UI·재시도 정책은 이번 기대 결과에 포함하지 않는다.
+- **유지 조건:** 저장된 과거 데이터와 현재 이력 위치는 유지한다. Diff가 참조를 연결한 다음 VDOM은 현재 상태로 사용하지 않는다. 실제 DOM 롤백·오류 UI·재시도 정책은 이번 기대 결과에 포함하지 않는다.
 
 ### FLOW-05 — applyPatch 실패 시 실제 영역만 현재 이력으로 복원하고 편집기는 유지한다
 
@@ -386,7 +386,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 - **입력·행동:** 테스트 환경에서 첫 `applyPatch()`만 오류를 발생시키도록 하고 Patch를 실행한다. 이어 오류를 해제한 뒤 같은 편집기 내용으로 다시 Patch한다.
 - **검증 시점:** 오류 처리 직후와 재시도 `handlePatch()` 종료 후.
 - **기대 결과:** 오류 직후 실제 영역은 A로 full render 복원되고 live VDOM도 복원된 A에 연결된다. History 길이·현재 위치·저장 데이터는 유지되고 새 이력은 추가되지 않는다. 편집기 HTML은 B 그대로다. 재시도 Patch는 복원된 A를 기준으로 B를 다시 계산하며 중복 노드를 만들지 않는다.
-- **유지 조건:** 과거 이력 데이터는 변하지 않는다. 복원에는 현재 live VDOM의 낡은 `dom` 참조가 아니라 `saveHistory.peek(0)`의 이력 데이터를 사용한다. `restoreSnapshot(..., { restoreEditor: false })`로 편집기를 덮어쓰지 않고, `saveHistory.move(0, liveVDOM)`으로 위치 이동 없이 live VDOM만 교체한다. 복원 자체가 실패할 때의 오류 UI·재시작 정책은 이번 기대 결과에 포함하지 않는다.
+- **유지 조건:** 과거 이력 데이터는 변하지 않는다. 실패한 Diff가 참조를 연결한 다음 VDOM은 폐기한다. 복원에는 현재 live VDOM의 낡은 `dom` 참조가 아니라 `saveHistory.peek(0)`의 이력 데이터를 사용한다. `restoreSnapshot(..., { restoreEditor: false })`로 편집기를 덮어쓰지 않고, `saveHistory.move(0, liveVDOM)`으로 위치 이동 없이 live VDOM만 교체한다. 복원 자체가 실패할 때의 오류 UI·재시작 정책은 이번 기대 결과에 포함하지 않는다.
 
 ## 9. History — 상태·HTML 저장과 양쪽 영역 복원·후속 Patch 검증
 

@@ -43,7 +43,7 @@
   - `createSnapshot(parsedRoot): VRoot` — `{ childNodes: [...], dom: null }`
   - `diff(prevRoot: VRoot, nextRoot: VRoot): DiffCommand[]`
 - **영향 범위:** `p1_prd.md` §3, §5, §6, §9.1; `p1_function_flow.md` §3, §5, §6; `p1_test_cases.md` §1, SNAP-05, PATCH-08
-- **후속 결정:** `applyPatch(prevRoot, nextRoot, changes): VRoot`와 유지 노드 연결은 P1-PATCH-LINK-01 A안으로 확정했다. `VRoot`는 컨테이너 태그·속성을 Diff하지 않는다. 인터페이스는 `p1_interfaces.md`의 §1–§3을 따른다.
+- **후속 결정:** `applyPatch(prevRoot, nextRoot, changes): VRoot`와 유지 노드 연결은 P1-PATCH-LINK-02로 확정했다. `VRoot`는 컨테이너 태그·속성을 Diff하지 않는다. 인터페이스는 `p1_interfaces.md`의 §1–§3을 따른다.
 
 ## P1-KEY-01 — key attribute를 실제 DOM에도 렌더링
 
@@ -71,7 +71,7 @@
 
 ## P1-PATCH-LINK-01 — 유지 노드의 실제 DOM 참조 연결 방식
 
-- **상태:** accepted
+- **상태:** superseded by P1-PATCH-LINK-02
 - **날짜:** 2026-11-07
 - **배경:** `diff()`는 변경 명령만 반환한다. Patch가 끝나면 다음 VDOM의 모든 노드가 실제 DOM을 가리켜야 하지만, 변경 없는 노드는 명령에 포함되지 않는다.
 - **결정:** A안. `applyPatch(prevRoot, nextRoot, changes)`가 `matchChildren()`을 다시 실행해 유지·이동 노드에 `prev.dom`을 연결하고 완성된 `nextRoot`를 반환한다. `diff()`는 지금처럼 정렬된 명령 배열을 반환한다.
@@ -84,3 +84,25 @@
 - **보정:** `VRoot` 분리에 따라 root-level `insert`·`move`의 `parent`는 `VNode | VRoot`다.
 - **검토한 대안:** B안 — `diff()`가 `{ changes, matches }`를 반환한다. 매칭을 한 번만 하지만 기존 TC와 `diff()` 반환 계약을 바꿔야 해서 채택하지 않았다.
 - **영향 범위:** `p1_prd.md` §3, §9.2; `p1_function_flow.md` §3; `p1_test_cases.md` PATCH-01–08; `src/vdom/patch.ts`, `src/vdom/match.ts`, `tests/unit/vdom.patch.test.ts`, `tests/unit/vdom.match.test.ts`
+
+## P1-PATCH-LINK-02 — diff가 유지 노드의 실제 DOM 참조를 연결
+
+- **상태:** accepted
+- **날짜:** 2026-11-07
+- **배경:** P1-PATCH-LINK-01 A안은 diff와 Patch가 `matchChildren()`을 각각 실행해 매칭을 두 번 수행했다. 매칭을 한 번만 수행하고 Patch는 새 노드 생성에 집중하도록 역할을 조정한다.
+- **결정:** `diff()`가 매칭된 pair 중 type/tag가 같은 유지·이동·수정 노드와 `VRoot`에 `prev.dom`을 `next.dom`으로 연결한다. insert/replace 노드는 diff가 연결하지 않고 null로 둔다. `applyPatch(prevRoot, nextRoot, changes)`는 유지 노드가 이미 연결되었다고 가정하고, 변경 명령 적용과 insert/replace의 `renderNode()` 연결만 담당한다. `diff()`의 반환 계약은 `DiffCommand[]`를 유지한다.
+- **이유:** 매칭을 한 번만 수행하면서 `diff()` 반환 타입과 `applyPatch()` 시그니처를 바꾸지 않는다. Patch는 실제 DOM 변경에 집중하고, diff가 비교·매칭 결과를 이용해 참조를 연결한다.
+- **인터페이스:**
+  - `diff(prevRoot, nextRoot): DiffCommand[]` — next VDOM의 유지 노드 `dom` 연결 포함
+  - `applyPatch(prevRoot, nextRoot, changes): VRoot`
+  - `linkNode(prev, next): boolean` — diff가 매칭 pair마다 호출하는 연결 단위. `src/vdom/link.ts`
+  - `linkMatchedDom(prevRoot, nextRoot): void` — 전체 트리 연결 유틸리티. 테스트·독립 연결용
+  - `assertAllLinked(root, actualRoot): void` — Patch 종료 검증
+- **영향 범위:**
+  - `p1_prd.md` §2 Patch, §3 applyPatch, §4 Diff, §6 초기화·복원, §7 History, §8 테스트 연결, §9
+  - `p1_function_flow.md` §2 Patch, §3 applyPatch, §4 Diff, §6 초기화·복원, §7 History, §8 테스트 연결
+  - `p1_interfaces.md` §1, §3, §4, §5, §6, §7
+  - `p1_test_cases.md` §1, §4–§9
+  - `src/vdom/link.ts`, `src/vdom/patch.ts`, `tests/unit/vdom.patch.test.ts`
+- **대체:** P1-PATCH-LINK-01 A안을 대체한다.
+- **미확정:** diff가 연결을 수행할 때 prev VDOM이 실제 DOM에 연결되어 있어야 한다는 전제의 오류 처리, diff 실패 시 부분 연결된 next VDOM의 폐기 정책.

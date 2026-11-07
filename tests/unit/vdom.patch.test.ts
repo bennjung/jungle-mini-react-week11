@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
+import { linkMatchedDom } from '../../src/vdom/link';
 import {
   applyPatch,
   assertAllLinked,
@@ -6,6 +7,16 @@ import {
 } from '../../src/vdom/patch';
 import type { DiffCommand, VRoot } from '../../src/vdom/types';
 import { collectNodes, element, root, text } from '../helpers/vdom';
+
+// 실제 흐름에서는 diff가 유지 노드의 dom을 연결한 뒤 applyPatch()를 호출한다.
+function applyAfterDiff(
+  prev: VRoot,
+  next: VRoot,
+  changes: DiffCommand[]
+): VRoot {
+  linkMatchedDom(prev, next);
+  return applyPatch(prev, next, changes);
+}
 
 function setup(prev: VRoot): HTMLDivElement {
   const container = document.createElement('div');
@@ -39,7 +50,7 @@ describe('PATCH-01 update text', () => {
       { type: 'update', target: prevText, data: { nodeValue: 'B' } }
     ];
 
-    const result = applyPatch(prev, next, changes);
+    const result = applyAfterDiff(prev, next, changes);
 
     expect(result).toBe(next);
     expect(nextP.dom).toBe(pDom);
@@ -87,7 +98,7 @@ describe('PATCH-02 update attributes and properties', () => {
       }
     ];
 
-    applyPatch(prev, next, changes);
+    applyAfterDiff(prev, next, changes);
 
     expect(nextInput.dom).toBe(input);
     expect(input.getAttribute('class')).toBe('b');
@@ -110,7 +121,7 @@ describe('PATCH-03 insert and remove', () => {
     const x = element('span', { key: 'x', children: [text('X')] });
     const next = root([x, a, b, c]);
 
-    applyPatch(prev, next, [
+    applyAfterDiff(prev, next, [
       { type: 'insert', node: x, parent: next, before: a }
     ]);
 
@@ -128,7 +139,7 @@ describe('PATCH-03 insert and remove', () => {
     const x = element('span', { key: 'x', children: [text('X')] });
     const next = root([a, x, b, c]);
 
-    applyPatch(prev, next, [
+    applyAfterDiff(prev, next, [
       { type: 'insert', node: x, parent: next, before: b }
     ]);
 
@@ -146,7 +157,7 @@ describe('PATCH-03 insert and remove', () => {
     const x = element('span', { key: 'x', children: [text('X')] });
     const next = root([a, b, c, x]);
 
-    applyPatch(prev, next, [
+    applyAfterDiff(prev, next, [
       { type: 'insert', node: x, parent: next, before: null }
     ]);
 
@@ -163,7 +174,7 @@ describe('PATCH-03 insert and remove', () => {
     const aDom = a.dom;
 
     const next = root([b, c]);
-    applyPatch(prev, next, [{ type: 'remove', target: a }]);
+    applyAfterDiff(prev, next, [{ type: 'remove', target: a }]);
 
     expect(childKeys(container)).toEqual(['b', 'c']);
     expect(aDom?.parentNode).toBeNull();
@@ -177,7 +188,7 @@ describe('PATCH-03 insert and remove', () => {
     const container = setup(prev);
 
     const next = root([a, c]);
-    applyPatch(prev, next, [{ type: 'remove', target: b }]);
+    applyAfterDiff(prev, next, [{ type: 'remove', target: b }]);
 
     expect(childKeys(container)).toEqual(['a', 'c']);
   });
@@ -190,7 +201,7 @@ describe('PATCH-03 insert and remove', () => {
     const container = setup(prev);
 
     const next = root([a, b]);
-    applyPatch(prev, next, [{ type: 'remove', target: c }]);
+    applyAfterDiff(prev, next, [{ type: 'remove', target: c }]);
 
     expect(childKeys(container)).toEqual(['a', 'b']);
   });
@@ -207,7 +218,7 @@ describe('PATCH-04 replace', () => {
     const replacement = element('p', { key: 'n1', children: [text('B')] });
     const next = root([replacement, span]);
 
-    applyPatch(prev, next, [
+    applyAfterDiff(prev, next, [
       { type: 'replace', target: previousDiv, node: replacement }
     ]);
 
@@ -230,7 +241,7 @@ describe('PATCH-05 move', () => {
     const cDom = c.dom;
 
     const next = root([c, a, b]);
-    applyPatch(prev, next, [
+    applyAfterDiff(prev, next, [
       { type: 'move', target: c, parent: next, before: a }
     ]);
 
@@ -248,7 +259,7 @@ describe('PATCH-05 move', () => {
     const container = setup(prev);
 
     const next = root([b, c, a]);
-    applyPatch(prev, next, [
+    applyAfterDiff(prev, next, [
       { type: 'move', target: a, parent: next, before: null }
     ]);
 
@@ -340,7 +351,7 @@ describe('PATCH-07 mixed changes', () => {
       { type: 'replace', target: d, node: nextD }
     ];
 
-    applyPatch(prev, next, changes);
+    applyAfterDiff(prev, next, changes);
 
     expect(childKeys(container)).toEqual(['c', 'x', 'a', 'd']);
     expect(nextC.dom).toBe(cDom);
@@ -381,7 +392,7 @@ describe('PATCH-08 full link', () => {
       { type: 'insert', node: nextEm, parent: nextDiv, before: null }
     ];
 
-    applyPatch(prev, next, changes);
+    applyAfterDiff(prev, next, changes);
 
     expect(nextDiv.dom).toBe(divDom);
     expect(nextP.dom).toBe(pDom);
@@ -404,13 +415,50 @@ describe('root insertion', () => {
     });
     const next = root([section]);
 
-    applyPatch(prev, next, [
+    applyAfterDiff(prev, next, [
       { type: 'insert', node: section, parent: next, before: null }
     ]);
 
     expect(container.firstElementChild).toBe(section.dom);
     expect(section.dom).not.toBeNull();
     assertAllLinked(next, container);
+  });
+});
+
+describe('linkMatchedDom', () => {
+  it('유지 노드는 연결하고 새 노드는 null로 둔다', () => {
+    const prevText = text('A');
+    const prevP = element('p', { key: 'p1', children: [prevText] });
+    const prevSpan = element('span', { key: 's1', children: [text('유지')] });
+    const prev = root([prevP, prevSpan]);
+    const container = setup(prev);
+
+    const nextP = element('p', { key: 'p1', children: [text('B')] });
+    const nextSpan = element('span', { key: 's1', children: [text('유지')] });
+    const nextEm = element('em', { key: 'e1', children: [text('추가')] });
+    const next = root([nextP, nextSpan, nextEm]);
+
+    linkMatchedDom(prev, next);
+
+    expect(next.dom).toBe(container);
+    expect(nextP.dom).toBe(prevP.dom);
+    expect(nextP.childNodes[0]?.dom).toBe(prevText.dom);
+    expect(nextSpan.dom).toBe(prevSpan.dom);
+    expect(nextEm.dom).toBeNull();
+  });
+
+  it('같은 key라도 태그가 다르면 연결하지 않는다', () => {
+    const prevDiv = element('div', { key: 'n1', children: [text('A')] });
+    const prev = root([prevDiv]);
+    setup(prev);
+
+    const nextP = element('p', { key: 'n1', children: [text('A')] });
+    const next = root([nextP]);
+
+    linkMatchedDom(prev, next);
+
+    expect(nextP.dom).toBeNull();
+    expect(nextP.childNodes[0]?.dom).toBeNull();
   });
 });
 

@@ -36,7 +36,7 @@ export interface VRoot {
 
 - `nodeType`은 DOM 표준 상수다. 요소 `1`, 텍스트 `3`만 지원하고 주석 `8`은 제외한다.
 - `VRoot`는 실제 영역 컨테이너에 대응하는 논리적 루트다. 컨테이너 태그·속성을 가지지 않으며 Diff 대상이 아니다.
-- `dom`은 Snapshot·Diff 종료까지 null이고, Patch 성공 후 `VRoot`와 모든 `VNode`에 실제 DOM이 연결된다.
+- `dom`은 Snapshot 종료 시 null이다. Diff 종료 시 `VRoot`와 유지·이동·수정 노드에 실제 DOM이 연결되고, insert/replace 노드는 Patch 성공 후 연결된다.
 - `key`는 `attributes`에서 제거하지 않고 실제 DOM에도 렌더링한다.
 
 ## 2. VDOM create — accepted
@@ -109,15 +109,15 @@ export function diffProperties(prev: VNode, next: VNode): VNodeProperties | null
 - `target`은 이전 VDOM 노드, `node`는 다음 VDOM 노드다.
 - `parent`는 다음 VDOM의 `VNode` 또는 `VRoot`다. root-level insert·move는 `VRoot`를 parent로 사용한다.
 - `before`는 다음 VDOM 노드 또는 null이다. `before === null`은 맨 뒤를 뜻한다.
-- `diff()`는 정렬된 명령 배열을 반환하며, 입력 VDOM과 실제 DOM을 수정하지 않는다.
-- Diff 종료 후에도 다음 VDOM의 모든 `dom`은 null이다.
+- `diff()`는 정렬된 명령 배열을 반환하며, 이전 VDOM과 실제 DOM을 수정하지 않는다.
+- Diff 종료 시 `VRoot`와 유지·이동·수정 노드의 `dom`은 실제 DOM에 연결되고, insert/replace 노드의 `dom`은 null로 남는다.
 - 노드 대응은 keyed 요소는 같은 `key`, keyless 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 계산한다.
 - `replace`는 제자리 교체만 담당하고, 위치 이동은 `move`가 담당한다.
 - `orderChanges()`는 부모·기준 형제가 먼저 존재하도록 명령 순서를 정한다.
 
-## 4. Diff·Patch 공유 매칭 — accepted
+## 4. Diff·Patch 공유 매칭과 연결 — accepted
 
-`P1-PATCH-LINK-01` A안으로 확정했다. 구현은 `src/vdom/match.ts`에 둔다.
+`P1-PATCH-LINK-02`로 확정했다. 매칭은 `src/vdom/match.ts`, 연결은 `src/vdom/link.ts`에 둔다.
 
 ```ts
 // src/vdom/match.ts
@@ -135,16 +135,26 @@ export function matchChildren(
 ): ChildMatchPlan;
 ```
 
-- Diff는 이 계획으로 `insert`·`remove`·`move`·재귀 대상을 만든다.
-- Patch는 이 계획으로 유지·이동 노드의 `prev.dom`을 `next.dom`에 연결한다.
-- `pairs`는 replace 대상도 포함할 수 있다. Patch의 연결 단계에서는 type/tag가 다른 쌍을 건너뛴다.
-- `inserts`의 노드는 대응하는 이전 노드가 없으므로 `dom`을 연결하지 않는다.
-- `matchChildren()`은 Diff와 Patch가 공유하는 모듈로 둔다.
+```ts
+// src/vdom/link.ts
+
+export function linkNode(prev: VNode, next: VNode): boolean;
+
+export function linkMatchedDom(prev: VRoot, next: VRoot): void;
+
+export function isLinkablePair(prev: VNode, next: VNode): boolean;
+```
+
+- Diff는 이 계획으로 `insert`·`remove`·`move`·재귀 대상을 만들고, 같은 type/tag의 pair에 `linkNode()`를 적용해 `prev.dom`을 `next.dom`에 연결한다.
+- Patch는 `matchChildren()`을 실행하지 않는다. 유지·이동 노드는 Diff가 연결한 참조를 사용한다.
+- `pairs`는 replace 대상도 포함할 수 있다. Diff의 연결 단계에서는 type/tag가 다른 쌍을 건너뛴다.
+- `inserts`의 노드는 대응하는 이전 노드가 없으므로 `dom`을 연결하지 않는다. Patch의 `renderNode()`가 새 DOM을 연결한다.
+- `linkMatchedDom()`은 전체 트리를 한 번에 연결하는 유틸리티다. Diff 구현은 매칭을 한 번만 수행하기 위해 `linkNode()`를 매칭 계획의 pair마다 호출한다.
 - 중복 key는 현재 등장 순서대로 대응하는 잠정 동작이며, CONF-03 확정 시 함께 조정한다.
 
 ## 5. Patch — accepted
 
-`P1-PATCH-LINK-01` A안으로 확정했다. 구현은 `src/vdom/patch.ts`에 둔다.
+`P1-PATCH-LINK-02`로 확정했다. 구현은 `src/vdom/patch.ts`에 둔다.
 
 ```ts
 // src/vdom/patch.ts
@@ -158,8 +168,6 @@ export function applyPatch(
 export function renderNode(vnode: VNode): Node;
 
 export function renderChildren(root: VRoot, container: Element): void;
-
-export function linkMatchedDom(prev: VRoot, next: VRoot): void;
 
 export function assertAllLinked(root: VRoot, actualRoot: Element): void;
 ```
@@ -179,13 +187,13 @@ function moveNode(target: VNode, parent: VNode | VRoot, before: VNode | null): v
 확정된 `applyPatch()` 계약:
 
 - `changes`는 `diff()` 또는 `orderChanges()`가 정렬한 명령 배열이다.
-- `linkMatchedDom(prevRoot, nextRoot)`로 유지·이동 노드의 `prev.dom`을 `next.dom`에 연결한다.
-- 변경 명령을 적용한다. 새·교체 노드는 `renderNode()`가 실제 DOM을 생성하고 연결한다.
+- `diff()`가 유지·이동·수정 노드와 `VRoot`의 `prev.dom`을 `next.dom`에 이미 연결했다고 전제한다.
+- 변경 명령을 적용한다. insert/replace 노드는 `renderNode()`가 실제 DOM을 생성하고 하위 트리까지 연결한다.
 - `assertAllLinked(nextRoot, actualRoot)`로 `VRoot`와 모든 `VNode`의 연결을 확인한다.
 - 완성된 `nextRoot`를 반환한다.
 - History 저장은 하지 않는다. 저장 여부는 `handlePatch()`가 결정한다.
 
-B안(`diff()`가 `{ changes, matches }` 반환)은 채택하지 않았다.
+`diff()`는 `DiffCommand[]`를 반환하며, 매칭 결과를 별도 반환값으로 넘기지 않는다. 매칭과 유지 노드 연결은 `diff()` 내부에서 한 번 수행한다.
 
 ## 6. App·통합 — accepted (I/O 제안)
 
@@ -218,11 +226,11 @@ export function writeEditorHTML(editor: HTMLTextAreaElement, html: string): void
 const prev = history.get();
 const html = readEditorHTML(editor);
 const next = createSnapshot(parseHTML(html));
-const changes = diff(prev, next);
+const changes = diff(prev, next); // 유지 노드의 dom 참조 연결 포함
 
 if (changes.length === 0) return;
 
-const completed = applyPatch(prev, next, changes);
+const completed = applyPatch(prev, next, changes); // insert/replace 새 DOM 연결
 history.set(completed, html);
 ```
 
@@ -235,7 +243,8 @@ history.set(completed, html);
 | `VNode`, `VRoot`, `DiffCommand` | accepted | P1-VDOM-ROOT-01, PRD §9 |
 | VDOM create 함수 | accepted | PRD §5, 함수 흐름 §5 |
 | Diff 함수·명령 | accepted | PRD §4, §9.2 |
-| `matchChildren`, `ChildMatchPlan` | accepted | P1-PATCH-LINK-01 A |
-| Patch 함수·연결 방식 | accepted | P1-PATCH-LINK-01 A |
+| `matchChildren`, `ChildMatchPlan` | accepted | P1-PATCH-LINK-02 |
+| `linkNode`, `linkMatchedDom`, `isLinkablePair` | accepted | P1-PATCH-LINK-02 |
+| Patch 함수·연결 방식 | accepted | P1-PATCH-LINK-02 |
 | `AppElements`, `init` | accepted | P1-UI-01 |
 | `readEditorHTML`, `writeEditorHTML` | 제안 | 앱 통합 단계 |

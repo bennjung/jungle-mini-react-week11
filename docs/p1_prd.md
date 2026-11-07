@@ -2,7 +2,7 @@
 
 ## 0. Process
 
-> 현재 VDOM 조회 → 편집기 HTML 읽기 → 임시 DOM 파싱 → 참조 없는 다음 VDOM 생성 → Diff → Patch·전체 참조 연결 → 현재 상태 갱신·History 저장
+> 현재 VDOM 조회 → 편집기 HTML 읽기 → 임시 DOM 파싱 → 참조 없는 다음 VDOM 생성 → Diff(변경 계산·유지 노드 참조 연결) → Patch(변경 적용·새 노드 참조 연결) → 현재 상태 갱신·History 저장
 
 `main.html`을 기준으로 상위 이벤트 흐름에서 Patch → Diff → VDOM 순서로 하위 역할을 설계한다.
 테스트 영역은 HTML 코드 편집기, 실제 영역은 렌더링 화면이다. 요구사항 원문의 “테스트 영역 렌더링”은 HTML 문자열 편집기로 해석한다. 아래 내용은 설계 명세이며 구현 코드는 아니다.
@@ -14,11 +14,11 @@
 | 단계 | 이전 VDOM | 다음 VDOM |
 | --- | --- | --- |
 | Snapshot 종료 | 현재 실제 DOM 참조 유지 | VRoot와 모든 VNode의 dom이 null |
-| Diff·명령 정렬 종료 | 현재 실제 DOM 참조 유지 | 참조 미연결 상태 유지 |
-| Patch 성공 | 변경 전 비교 기준 | 유지된 노드와 새 노드를 포함해 실제 DOM 참조 연결 완료 |
+| Diff 종료 | 현재 실제 DOM 참조 유지 | VRoot와 유지·이동·수정 노드는 실제 DOM 참조 연결, insert/replace 노드는 null |
+| Patch 성공 | 변경 전 비교 기준 | insert/replace를 포함해 실제 DOM 참조 연결 완료 |
 | 현재 상태 지정·이력 저장 | 이전 상태 | 완성된 다음 VDOM을 현재 상태로 사용 |
 
-아래 내용은 호출 흐름을 설명한다. Patch는 `applyPatch(prevRoot, nextRoot, changes)`로 호출하며, `changes`는 정렬된 명령 배열이고 완성된 `nextRoot`를 반환한다. 유지 노드의 참조 연결은 `p1_decisions.md`의 P1-PATCH-LINK-01 A안을 따른다.
+아래 내용은 호출 흐름을 설명한다. Patch는 `applyPatch(prevRoot, nextRoot, changes)`로 호출하며, `changes`는 정렬된 명령 배열이고 완성된 `nextRoot`를 반환한다. 유지 노드의 참조 연결은 `p1_decisions.md`의 P1-PATCH-LINK-02를 따른다.
 
 ## 1. main.html → 진입점
 
@@ -50,12 +50,12 @@ handlePatch()
 ├─ readEditorHTML()                     HTML 원문 읽기
 ├─ parseHTML(html)                      임시 DOM 트리 생성
 ├─ createSnapshot(parsedRoot)           실제 DOM 참조 없는 다음 VDOM 생성
-├─ diff(curVDOM, nextVDOM)               변경 명령 계산, 다음 VDOM의 dom은 null 유지
+├─ diff(curVDOM, nextVDOM)               변경 명령 계산 + 유지 노드의 실제 DOM 참조 연결
 ├─ 변경 없음 → 종료                    기존 현재 VDOM과 이력 유지
 ├─ try
 │  └─ applyPatch()
 │     ├─ 이전 VDOM의 참조로 실제 DOM 변경
-│     └─ 다음 VDOM 전체의 실제 DOM 참조 연결 완료
+│     └─ insert/replace 노드의 실제 DOM 생성·연결, 전체 연결 검증
 ├─ catch
 │  ├─ entry = saveHistory.peek(0)         현재 이력 데이터 조회
 │  ├─ liveVDOM = restoreSnapshot(entry, actualRoot, { restoreEditor: false })
@@ -82,11 +82,10 @@ function handleHistoryMove(direction) {
 
 `entry`는 DOM 참조 없는 VDOM 데이터와 해당 시점의 HTML 원문을 담는다. 이력 이동은 실제 화면과 코드 편집기를 함께 복원하며, 저장하지 않은 편집 내용은 선택한 이력의 HTML로 교체한다. 범위를 벗어나면 이동하지 않는다.
 
-## 3. applyPatch() → 실제 DOM 변경과 다음 VDOM 참조 연결
+## 3. applyPatch() → 실제 DOM 변경과 새 노드 참조 연결
 
 ```text
 applyPatch(prevRoot, nextRoot, changes) 이전·다음 VDOM과 변경 명령을 이용하는 Patch 단계
-├─ linkMatchedDom(prevRoot, nextRoot)   유지·이동 노드에 이전 실제 DOM 연결
 ├─ replaceNode(target, node)            제자리 교체, 이동은 move
 │  ├─ renderNode(node)                  새 실제 DOM 생성·참조 연결
 │  └─ 기존 DOM 교체
@@ -101,28 +100,29 @@ applyPatch(prevRoot, nextRoot, changes) 이전·다음 VDOM과 변경 명령을 
 │  └─ 대상 DOM 제거
 ├─ moveNode(target, parent, before)
 │  └─ 기존 DOM을 기준 형제 앞으로 이동
-├─ 다음 VDOM 전체에 실제 DOM 참조 연결 완료
-│  ├─ 유지·수정·이동 노드 → 이전 VDOM에서 찾은 실제 DOM 연결
-│  ├─ 삽입·교체 노드 → 생성된 실제 DOM 연결
-│  └─ VRoot → 실제 영역 컨테이너 연결
+├─ insert/replace 노드의 하위 트리까지 실제 DOM 참조 연결 완료
 └─ assertAllLinked(nextRoot, actualRoot) 전체 연결 확인
 ```
 
-명령은 VDOM 객체를 직접 참조한다. Patch 시작 시 기존 실제 DOM은 이전 VDOM의 `dom`으로 찾으며, 다음 VDOM의 `dom`은 모두 null이다. 부모·기준 형제의 실제 DOM 참조도 Patch에서 해석한다. 이 참조는 편집기나 파싱용 임시 DOM을 가리키지 않는다.
+`applyPatch()`는 `diff()`가 유지·이동·수정 노드와 `VRoot`의 실제 DOM 참조를 이미 연결했다고 전제한다. Patch는 insert/replace 노드에 대해서만 `renderNode()`로 새 실제 DOM을 생성하고 연결한다.
+
+명령은 VDOM 객체를 직접 참조한다. Patch 시작 시 유지 노드의 실제 DOM은 이전 VDOM의 `dom`으로 찾으며, insert/replace 노드의 `dom`은 null이다. 부모·기준 형제의 실제 DOM 참조도 Patch에서 해석한다. 이 참조는 편집기나 파싱용 임시 DOM을 가리키지 않는다.
 `before === null`은 맨 뒤를 뜻한다. insert와 move는 `insertBefore()`로 위치를 적용하며, update와 move는 기존 DOM 객체를 유지한다.
 
-기존 실제 DOM과 다음 VDOM의 연결은 Patch에서 수행한다. `renderNode()`는 새 실제 DOM을 생성할 때 해당 다음 VDOM 노드에 연결한다. 기존 노드를 유지·수정·이동하는 경우에도 다음 VDOM에 해당 실제 DOM 참조를 연결한다.
+유지·이동·수정 노드의 연결은 `diff()`가 수행한다. `renderNode()`는 insert/replace의 새 실제 DOM을 생성할 때 해당 다음 VDOM 노드와 하위 트리에 연결한다.
 
-변경 명령이 없는 노드와 그 하위 트리도 연결 대상이다. Patch 성공 시 `VRoot`를 포함한 다음 VDOM 전체가 실제 DOM을 가리켜야 한다. 참조를 연결하려고 변경 없는 실제 DOM을 재생성하지 않는다.
+변경 명령이 없는 노드와 그 하위 트리도 diff의 연결 대상이다. Patch 성공 시 `VRoot`를 포함한 다음 VDOM 전체가 실제 DOM을 가리켜야 한다. 참조를 연결하려고 변경 없는 실제 DOM을 재생성하지 않는다.
 
 applyPatch 실행 중 예외가 발생하면 applyPatch 자체는 롤백하지 않는다. 호출자인 handlePatch가 현재 이력 데이터로 실제 영역만 복원하고, 다음 VDOM은 현재 상태로 사용하지 않는다.
 
 ## 4. diff() → 변경 명령 배열
 
 ```text
-diff(curVDOM, nextVDOM)
+diff(prevRoot, nextRoot)
+├─ nextRoot.dom = prevRoot.dom        VRoot 참조 연결
 ├─ compareNode(prev, next)
-│  ├─ 노드 종류·태그 변경 → replace (제자리 교체, 이동은 move)
+│  ├─ 노드 종류·태그 변경 → replace (제자리 교체, 이동은 move, DOM 연결 안 함)
+│  ├─ 같은 type/tag → linkNode()       prev.dom을 next.dom에 연결
 │  ├─ 텍스트 변경 → update
 │  ├─ diffAttributes() → update의 속성 데이터
 │  ├─ diffProperties() → update의 properties 데이터
@@ -135,7 +135,7 @@ diff(curVDOM, nextVDOM)
 └─ orderChanges() → 적용 순서가 보장된 명령 배열
 ```
 
-Diff는 실제 DOM과 입력 VDOM을 수정하지 않는다. attributes와 properties는 필드 이름·값을 비교한다. 변경이 없으면 빈 배열을 반환한다. 다음 VDOM의 모든 `dom`은 Diff 종료 후에도 null이며, 노드 대응 관계를 계산하는 것과 실제 DOM 참조를 연결하는 것은 구분한다.
+Diff는 실제 DOM과 이전 VDOM을 수정하지 않는다. attributes와 properties는 필드 이름·값을 비교한다. 변경이 없으면 빈 배열을 반환한다. Diff 종료 시 `VRoot`와 유지·이동·수정 노드의 `dom`은 실제 DOM에 연결되고, insert/replace 노드의 `dom`은 null로 남는다. 즉 Diff는 VDOM 비교와 유지 노드의 실제 DOM 참조 연결을 함께 담당한다.
 
 ### 노드 식별 규칙
 
@@ -205,7 +205,7 @@ renderNode(vnode)
 
 `restoreSnapshot()`의 `restoreEditor` 기본값은 true다. applyPatch 실패 복구는 false로 호출해 실제 영역만 복원하고 편집기 HTML은 유지한다.
 
-초기화도 Snapshot·Diff 종료까지 샘플 `VRoot`와 모든 `VNode`의 `dom`이 null이고, Patch 성공 후에만 전체 실제 DOM 참조를 가진다. 빈 이전 VDOM의 `VRoot`는 작업 대상인 실제 컨테이너를 가리킨다.
+초기화는 빈 이전 VDOM을 비교 기준으로 사용하므로 Diff가 연결할 유지 노드가 없고, 샘플 `VRoot`와 모든 `VNode`의 `dom`은 Patch 성공 후에 전체 연결된다. 빈 이전 VDOM의 `VRoot`는 작업 대상인 실제 컨테이너를 가리킨다.
 
 초기 실제 영역은 비어 있다는 전제다. 이미 샘플 DOM이 있는 페이지에서는 이를 빈 루트로 간주하면 중복 생성되므로 초기화 경로를 혼용하지 않는다.
 최상위 VDOM은 실제 영역 컨테이너에 대응하는 `VRoot`이며, 컨테이너 자체의 태그·속성은 Diff하지 않는다. 이력 복원 시 `VRoot.dom`도 현재 `actualRoot`로 연결한다.
@@ -226,7 +226,7 @@ SELECT의 상태는 OPTION 생성 후 적용한다. 다중 선택은 OPTION.sele
 
 저장 배열에는 DOM 참조를 제외한 VDOM 데이터 복사본과 HTML 원문을 보관한다. 원문을 함께 저장해 들여쓰기 등 코드 표현도 복원한다. 현재 렌더링용 VDOM만 DOM 참조를 포함하고, 과거 데이터는 수정하지 않는다.
 applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `restoreSnapshot(..., { restoreEditor: false })`로 실제 영역만 복원한 뒤 `move(0, liveVDOM)`으로 live VDOM만 교체한다.
-현재 위치와 렌더링용 VDOM의 갱신은 History 내부에서 함께 처리한다. 새 상태 저장은 Patch 성공으로 다음 VDOM의 참조 연결이 완성된 뒤 수행한다. 변경 없는 경우에는 참조가 없는 다음 VDOM으로 현재 상태를 바꾸지 않는다. 속성 나열 순서처럼 DOM 데이터가 같으면 새 이력을 추가하지 않으며, 실제 텍스트 노드가 달라지는 공백 변경은 별도로 비교한다.
+현재 위치와 렌더링용 VDOM의 갱신은 History 내부에서 함께 처리한다. 새 상태 저장은 Patch 성공으로 다음 VDOM의 참조 연결이 완성된 뒤 수행한다. 변경 없는 경우에는 Diff가 참조를 연결한 다음 VDOM으로 현재 상태를 바꾸지 않는다. 속성 나열 순서처럼 DOM 데이터가 같으면 새 이력을 추가하지 않으며, 실제 텍스트 노드가 달라지는 공백 변경은 별도로 비교한다.
 
 ## 8. 테스트 연결
 
@@ -237,7 +237,8 @@ applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `
 | 스냅샷 데이터·실제 DOM 참조 없음 | SNAP-01–SNAP-06 |
 | 순수한 변경 계산 | DIFF-01–DIFF-09 |
 | 명령 의존성·중복 방지 | ORDER-01–ORDER-05 |
-| 실제 DOM 연산·다음 VDOM 전체 참조 연결 | PATCH-01–PATCH-08 |
+| 유지 노드 참조 연결 | DIFF-01–DIFF-09 |
+| 실제 DOM 연산·새 노드 참조 연결 | PATCH-01–PATCH-08 |
 | 단계별·연속 Patch·변경 없음·실패 복구 | FLOW-01–FLOW-05 |
 | History 저장·복원·복원 후 Patch | HIST-01–HIST-06 |
 | 중복 key·key 변경·태그 변경 규칙 | CONF-03 |
@@ -256,12 +257,12 @@ applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `
 | `nodeValue` | 텍스트 노드의 문자열 값. 요소 노드는 null |
 | `childNodes` | 자식 `VNode` 배열. 순서 보존 |
 | `properties` | 스키마에 지정된 DOM 프로퍼티의 현재 값 객체 |
-| `dom` | 실제 DOM 객체 직접 참조. 다음 VDOM의 `VNode`는 Snapshot·Diff 종료까지 모두 null이며 Patch 성공 후 전체 연결 |
+| `dom` | 실제 DOM 객체 직접 참조. 다음 VDOM의 `VNode`는 Snapshot 종료 시 null이고, Diff 종료 시 유지·이동·수정 노드는 연결되며 insert/replace 노드는 Patch 성공 후 연결 |
 
 | VRoot 필드 | 내용 |
 | --- | --- |
 | `childNodes` | 실제 영역 컨테이너의 자식 `VNode` 배열. 순서 보존 |
-| `dom` | 실제 영역 컨테이너 참조. Snapshot에서는 null, Patch·초기화·이력 복원 후에는 `actualRoot` |
+| `dom` | 실제 영역 컨테이너 참조. Snapshot에서는 null, Diff·초기화·이력 복원 후에는 `actualRoot` |
 
 `VRoot`는 컨테이너 자체의 태그·속성을 가지지 않으며 Diff 대상이 아니다.
 
@@ -285,9 +286,9 @@ const propertySchema = {
 ### 9.2 Diff 명령
 
 `diff()`는 아래 명령들의 배열을 반환한다.
-예시의 `"<...>"`는 VDOM 객체 참조를 표시하는 자리표시자다. 실제 실행에서는 문자열이 아닌 객체 직접 참조를 사용한다. 기존 변경 대상은 이전 VDOM으로 찾고, 삽입·교체할 node는 다음 VDOM에 속한다. 다음 VDOM을 참조하는 parent·before의 실제 DOM 연결은 Patch에서 해석한다. root-level insert·move의 `parent`는 `VRoot`다.
+예시의 `"<...>"`는 VDOM 객체 참조를 표시하는 자리표시자다. 실제 실행에서는 문자열이 아닌 객체 직접 참조를 사용한다. 기존 변경 대상은 이전 VDOM으로 찾고, 삽입·교체할 node는 다음 VDOM에 속한다. 유지·이동 노드의 실제 DOM 참조는 Diff가 연결하고, 삽입·교체 노드의 parent·before는 Patch에서 해석한다. root-level insert·move의 `parent`는 `VRoot`다.
 
-변경 명령 배열과 별개로, Patch는 변경 없는 노드를 포함한 다음 VDOM 전체의 참조 연결을 완성해야 한다. `applyPatch(prevRoot, nextRoot, changes)`가 완성된 `nextRoot`를 반환하며, 유지 노드 연결은 `p1_decisions.md`의 P1-PATCH-LINK-01 A안을 따른다.
+변경 명령 배열과 별개로, Diff는 변경 없는 유지 노드를 포함한 다음 VDOM의 참조 연결을 완료하고, Patch는 삽입·교체 노드의 참조 연결을 완료한다. `applyPatch(prevRoot, nextRoot, changes)`는 완성된 `nextRoot`를 반환하며, 연결 역할은 `p1_decisions.md`의 P1-PATCH-LINK-02를 따른다.
 
 #### replace
 
