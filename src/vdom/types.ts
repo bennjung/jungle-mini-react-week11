@@ -34,7 +34,8 @@ export type UpdateData = {
   nodeValue?: string;
   setAttributes?: VNodeAttribute[];
   removeAttributes?: string[];
-  properties?: VNodeProperties;
+  setProperties?: VNodeProperties;
+  removeProperties?: string[];
 };
 
 export type DiffCommand =
