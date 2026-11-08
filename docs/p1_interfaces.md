@@ -1,6 +1,6 @@
 # Phase 1 인터페이스
 
-기준: `p1_prd.md`, `p1_function_flow.md`, `p1_test_cases.md`, `p1_decisions.md`.
+기준: `p1_prd.md`, `p1_function_flow.md`, `p1_test_cases.md`, `p1_decisions.md`. History·복원·Handler의 상세 설계는 `p1_history_handler_design.md`를 따른다.
 
 아래 코드는 구현 코드가 아니라 타입·함수 계약이다. `accepted`와 `제안`을 구분한다. `제안` 항목은 확정 전까지 구현 기준으로 사용하지 않는다.
 
@@ -154,7 +154,8 @@ export function isLinkablePair(prev: VNode, next: VNode): boolean;
 - 같은 type/tag의 `matched` pair에는 `linkNode()`를 적용해 `prev.dom`을 `next.dom`에 연결한다. type/tag가 다른 pair는 replace 대상이므로 연결하지 않는다.
 - `inserted` 노드는 대응하는 이전 노드가 없으므로 Diff가 연결하지 않는다. Patch의 `renderNode()`가 새 DOM을 연결한다.
 - Patch는 매칭을 실행하지 않는다. 유지·이동 노드는 Diff가 연결한 참조를 사용한다.
-- `findChildMatches()`는 중복 key를 key 대응에서 제외하고 keyless 순서 대응 목록에 넣는다. 이는 CONF-03 확정 전의 현재 구현이며 최종 제품 규칙으로 확정된 내용이 아니다.
+- 노드 식별 규칙은 P1-CONF-03으로 확정됐다. 같은 key + 같은 태그는 matched/update, 같은 key + 다른 태그는 replace, key 변경은 remove + insert다.
+- 중복 key는 key 대응에서 제외하고 keyless 순서 대응 목록에 넣는다. 어느 한쪽 목록에서라도 중복된 key는 그 비교에서 식별자로 사용하지 않으며, 원본 `attributes`의 key 속성은 삭제하지 않는다.
 
 ## 5. Patch — accepted
 
@@ -199,7 +200,96 @@ function moveNode(target: VNode, parent: VNode | VRoot, before: VNode | null): v
 
 `diff()`는 `DiffCommand[]`를 반환하며, 매칭 결과를 별도 반환값으로 넘기지 않는다. 매칭과 유지 노드 연결은 `diff()` 내부에서 한 번 수행한다.
 
-## 6. App·통합 — accepted (I/O 일부 제안)
+## 6. App·통합 — accepted
+
+### 6.1 History
+
+`P1-HISTORY-STATE-01`로 확정했다. History는 저장 entry, 현재 위치, 현재 live VDOM을 함께 소유한다.
+
+```ts
+// src/app/history.ts
+
+export type HistoryDirection = -1 | 0 | 1;
+
+export interface HistoryEntry {
+  vdom: VRoot;   // 모든 dom이 null인 저장 데이터
+  html: string;
+}
+
+export interface History {
+  get(): VRoot;
+  set(vdom: VRoot, html: string): void;
+  peek(direction: HistoryDirection): Readonly<HistoryEntry> | null;
+  move(direction: HistoryDirection, liveVDOM: VRoot): void;
+}
+
+export function createHistory(): History;
+```
+
+- `get()`은 현재 화면과 연결된 live VDOM을 반환한다. 첫 `set()` 전에는 오류다.
+- `peek()`은 저장 entry의 읽기 전용 view를 반환하며 위치를 바꾸지 않는다. 범위 밖이면 null이다.
+- `move()`는 위치와 currentLive만 갱신한다. 새 entry를 추가하지 않으며 범위 밖에서는 완전한 no-op이다. `move(0, liveVDOM)`은 위치를 유지하고 currentLive만 교체한다.
+- `set()`은 `cloneSnapshotData(vdom)`을 먼저 완료한 뒤 미래 이력을 제거하고 새 entry를 추가한다. 최대 50개를 넘으면 가장 오래된 entry를 제거한다.
+- 저장 entry의 `vdom`은 DOM 참조가 없고, properties는 현재 `propertySchema`가 만드는 원시값을 복사한다.
+
+### 6.2 복원
+
+`P1-RESTORE-01`로 확정했다.
+
+```ts
+// src/app/restore.ts
+
+export interface RestoreSnapshotOptions {
+  editor?: HTMLTextAreaElement;
+  restoreEditor?: boolean;
+}
+
+export function restoreSnapshot(
+  entry: Readonly<HistoryEntry>,
+  actualRoot: Element,
+  options?: RestoreSnapshotOptions
+): VRoot;
+```
+
+- `entry.vdom`을 `cloneSnapshotData()`로 복사한 뒤 기존 `renderChildren()`과 `renderNode()`로 전체 렌더링한다.
+- 렌더링 후 `assertAllLinked()`로 전체 참조 연결을 확인한다.
+- `restoreEditor !== false`이면 `editor`가 필수다. editor 검사는 실제 영역 렌더링 전에 수행한다.
+- `writeEditorHTML(editor, entry.html)`은 이 복원 경로와 이력 이동·실패 복구가 공유한다.
+- entry 원본은 수정하지 않는다.
+- 복원 자체 실패 시 이전 화면 보존은 보장하지 않으며 오류 UI·재시작 정책은 미확정이다.
+
+### 6.3 Handler
+
+```ts
+// src/app/handlers.ts
+
+export function createHandlers(
+  elements: AppElements,
+  history: History
+): AppHandlers;
+```
+
+`handlePatch()`:
+
+```ts
+const prev = history.get();
+const html = readEditorHTML(elements.editor);
+const next = createSnapshot(parseHTML(html));
+const changes = diff(prev, next); // 유지 노드의 dom 참조 연결 포함
+
+if (changes.length === 0) return;
+
+const completed = applyPatch(prev, next, changes); // insert/replace 새 DOM 연결
+history.set(completed, html);
+```
+
+- `diff()` 예외는 DOM·History를 변경하지 않으므로 복구 catch 범위가 아니다.
+- `applyPatch()` 예외는 `peek(0)` → `restoreSnapshot(..., { editor, restoreEditor: false })` → `move(0, liveVDOM)`으로 현재 화면만 복구한 뒤 원래 오류를 다시 던진다.
+- 복원도 실패하면 원래 Patch 오류와 복원 오류를 `AggregateError`로 보존한다.
+- `history.set()` 실패를 Patch 실패와 같은 복구 범위에 넣는 것은 미확정이다.
+- `handleHistoryMove(direction)`은 `peek()`이 null이면 종료하고, entry가 있으면 `restoreSnapshot(..., { editor })` 후 `move(direction, liveVDOM)`을 호출한다. 새 이력을 저장하지 않는다.
+
+### 6.4 App·초기화
 
 ```ts
 // src/app/init.ts
@@ -212,35 +302,30 @@ export interface AppElements {
   forwardButton: HTMLButtonElement;
 }
 
+export interface InitDependencies extends InitializerDependencies {
+  createHistory(): History;
+  getSampleHTML(): string;
+  createHandlers(elements: AppElements, history: History): AppHandlers;
+}
+
 export function getElements(): AppElements;
 
 export function init(dependencies?: InitDependencies): { elements: AppElements; root: VRoot };
 ```
 
-`InitDependencies`, `createInitializer()`, `InitializationHistory`의 경계는 P1-INIT-TDD-01을 따른다. 실제 호출에는 `parseHTML`, `createSnapshot`, `diff`, `applyPatch`, `createHistory`, `getSampleHTML`, `createHandlers` 구현이 필요하다.
+- `InitializationHistory`는 초기화가 쓰는 `Pick<History, 'get' | 'set'>` 최소 계약으로 유지한다.
+- `InitializerDependencies.applyPatch()`는 `VRoot`를 반환하고, `initializeDOM()`은 그 반환값을 `history.set()`에 전달한다.
+- `init()`의 반환 `root`는 초기 VDOM 참조다. 이후 현재 상태 조회는 `history.get()`을 사용한다.
+- 실제 호출에는 `parseHTML`, `createSnapshot`, `diff`, `applyPatch`, `createHistory`, `getSampleHTML`, `createHandlers`가 필요하다.
 
 ```ts
 // src/app/editor.ts
 
-export function readEditorHTML(editor: HTMLTextAreaElement): string;  // 구현
-export function writeEditorHTML(editor: HTMLTextAreaElement, html: string): void;  // 제안
+export function readEditorHTML(editor: HTMLTextAreaElement): string;
+export function writeEditorHTML(editor: HTMLTextAreaElement, html: string): void;
 ```
 
-`handlePatch()` 연결:
-
-```ts
-const prev = history.get();
-const html = readEditorHTML(editor);
-const next = createSnapshot(parseHTML(html));
-const changes = diff(prev, next); // 유지 노드의 dom 참조 연결 포함
-
-if (changes.length === 0) return;
-
-const completed = applyPatch(prev, next, changes); // insert/replace 새 DOM 연결
-history.set(completed, html);
-```
-
-- `readEditorHTML()`은 현재 구현되어 있고, `writeEditorHTML()`의 구현·최종 인자 형태는 앱 통합 단계에서 확정한다.
+- `readEditorHTML()`과 `writeEditorHTML()` 모두 accepted다. `writeEditorHTML`은 복원·실패 복구·이력 이동에서 사용한다.
 
 ## 7. 상태 요약
 
@@ -252,6 +337,9 @@ history.set(completed, html);
 | `findChildMatches`, `ChildMatch` | accepted | P1-MATCH-REMOVE-01 |
 | `linkNode`, `isLinkablePair` | accepted | P1-MATCH-REMOVE-01 |
 | Patch 함수·연결 방식 | accepted | P1-PATCH-LINK-02 |
+| `History`, `HistoryEntry`, `createHistory` | accepted | P1-HISTORY-STATE-01 |
+| `cloneSnapshotData`, `restoreSnapshot` | accepted | P1-RESTORE-01 |
+| `createHandlers`, `handlePatch`, `handleHistoryMove` | accepted | P1-HISTORY-STATE-01, P1-RESTORE-01 |
 | `AppElements`, `init(dependencies?)` | accepted | P1-UI-01, P1-INIT-TDD-01 |
-| `readEditorHTML` | accepted | P1-HTML-01 |
-| `writeEditorHTML` | 제안 | 앱 통합 단계 |
+| `InitializationHistory` | accepted | P1-INIT-TDD-01, P1-HISTORY-STATE-01 |
+| `readEditorHTML`, `writeEditorHTML` | accepted | P1-HTML-01, P1-RESTORE-01 |

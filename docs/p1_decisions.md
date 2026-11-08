@@ -90,6 +90,7 @@
   - `p1_function_flow.md` §2 Patch, §3 applyPatch, §6 restoreSnapshot, §7 History, §8 테스트 연결
   - `p1_test_cases.md` FLOW-05 추가
 - **미확정:** 복원 자체가 실패할 때의 오류 UI·재시작 정책, 사용자에게 오류를 표시하는 방식.
+- **후속 확정:** `P1-RESTORE-01`에서 `restoreSnapshot(entry, actualRoot, { editor, restoreEditor: false })`의 editor 옵션과 editor 필수 검사 시점을 확정했다. 복원 성공 시 원래 Patch 오류를 rethrow하고, 복원 실패 시 원래 오류와 복원 오류를 `AggregateError`로 보존한다. UI·재시작 정책은 계속 미확정이다.
 
 ## P1-ENV-01 — Phase 1 구현·테스트 환경
 
@@ -130,7 +131,7 @@
   - `p1_prd.md` §5, §9.1
   - `p1_function_flow.md` §5
   - `p1_test_cases.md` §1, SNAP-04, SNAP-05, PATCH-08
-- **미확정:** 같은 부모 안의 중복 key, key 값 변경, 같은 key의 태그 변경 대응은 CONF-03.
+- **후속 확정:** 같은 부모 안의 중복 key, key 값 변경, 같은 key의 태그 변경 대응은 P1-CONF-03에서 확정한다.
 - **후속 구현:** 2026-11-08 `matchChildren()`이 제거되고 `findChildMatches()`가 `key`를 읽는다. key 식별·보존 정책은 그대로 유지한다. 변경 이유와 범위는 P1-MATCH-REMOVE-01을 따른다.
 
 ## P1-UI-01 — main.html 좌우 2분할 화면과 초기 루트
@@ -207,8 +208,53 @@
   - 노드 연결: `linkNode(prev, next): boolean`, `isLinkablePair(prev, next): boolean` — `src/vdom/link.ts`
   - Patch: `applyPatch(prevRoot, nextRoot, changes): VRoot`, `assertAllLinked(root, actualRoot): void` — `src/vdom/patch.ts`
 - **제거:** `matchChildren()`, `ChildMatchPlan`, `MatchedPair`, `linkMatchedDom()`, `linkChildren()`.
-- **유지:** key 식별·보존 정책(P1-KEY-01), Diff의 유지 노드 연결, insert/replace를 Patch가 연결하는 `P1-PATCH-LINK-02`의 나머지 계약. 중복 key 규칙은 CONF-03 미확정 상태다.
+- **유지:** key 식별·보존 정책(P1-KEY-01), Diff의 유지 노드 연결, insert/replace를 Patch가 연결하는 `P1-PATCH-LINK-02`의 나머지 계약. 중복 key와 key 변경 규칙은 P1-CONF-03에서 확정한다.
 - **통합 검증:** `tests/integration/vdom-snapshot-diff-patch.test.ts`에 IT-01–IT-08을 추가했다. 실제 `parseHTML()`, `createSnapshot()`, `diff()`, `applyPatch()`만 연결하고, Snapshot의 참조 미연결, Diff 중 실제 DOM 불변, Diff 후 유지·이동 노드 연결, Patch 후 전체 연결, 연속 Patch의 DOM 객체 재사용을 확인했다. History와 편집기·버튼·handler는 이 결정의 검증 범위가 아니다.
 - **검증 결과:** 2026-11-08 `npm run check`에서 18개 테스트 파일, 148개 통과·2개 skip·7개 todo였다. IT-01–IT-08은 모두 통과했고 `npm run build`도 통과했다. 초안 실행 중 발견한 실패는 테스트가 `ul`의 key를 실제 영역 루트의 key로 읽은 fixture 오류였으며, 구현 기대 결과는 변경하지 않았다.
 - **영향 범위:** `src/vdom/link.ts`, 삭제된 `src/vdom/match.ts`, `tests/unit/vdom.patch.test.ts`, 삭제된 `tests/unit/vdom.match.test.ts`, `tests/integration/vdom-snapshot-diff-patch.test.ts`, `p1_interfaces.md` §4·§7, `p1_prd.md` §4·§8, `p1_function_flow.md` §4·§8, `p1_test_cases.md` §5–§8·§12, `p1_test_boards.md`.
 - **검증 한계:** History·`handlePatch()`·`handleHistoryMove()`·브라우저 기능 흐름은 아직 구현되지 않아 검증하지 않았다. `main.ts`의 실제 의존성 조립도 이 결정의 범위가 아니다.
+
+## P1-HISTORY-STATE-01 — History가 현재 live VDOM과 저장 항목을 함께 관리
+
+- **상태:** accepted
+- **날짜:** 2026-11-08
+- **결정:** History가 `entries`, 현재 위치 `index`, 현재 화면에 연결된 `currentLive` VDOM을 함께 소유한다. `get()`은 currentLive, `peek(direction)`은 저장 entry의 읽기 전용 view, `set(vdom, html)`은 DOM 참조 없는 복사본을 저장하면서 currentLive를 전달받은 VDOM으로 교체하고, `move(direction, liveVDOM)`은 위치와 currentLive만 갱신한다.
+- **이유:** 현재 위치와 currentLive를 한 객체가 관리해야 Patch 성공·이력 이동·실패 복구에서 두 상태가 어긋나지 않는다. `get()`을 History 밖으로 분리하면 소유자가 둘로 늘어 동기화 지점과 회귀 위험이 커진다.
+- **저장 데이터:** `HistoryEntry`는 `{ vdom: VRoot, html: string }`이다. `vdom`은 `cloneSnapshotData()`로 복사하며 모든 `dom`은 null이다. properties는 현재 `propertySchema`가 만드는 원시값을 얕게 복사한다.
+- **History API:** `get(): VRoot`, `set(vdom, html): void`, `peek(direction: -1|0|1): Readonly<HistoryEntry> | null`, `move(direction, liveVDOM): void`.
+- **상한:** 페이지 세션 메모리 기준 최대 50개다. `set()`에서 미래 이력을 제거한 뒤 새 항목을 추가하고, 50개를 넘으면 가장 오래된 항목을 제거하며 index를 보정한다.
+- **경계:** 첫 `set()` 전 `get()`은 오류, 범위 밖 `peek()`은 null, 범위 밖 `move()`는 완전한 no-op, `move(0, liveVDOM)`은 index를 유지하고 currentLive만 교체한다.
+- **검증 계획:** HIST-01, HIST-03의 조회, HIST-04의 저장, HIST-07의 상한·퇴거. `peek`이 위치를 바꾸지 않고 저장 데이터를 수정하지 않는지 확인한다.
+- **미확정·한계:** 하나의 초대형 VDOM이 차지하는 메모리는 50개 상한만으로 제한되지 않는다. `history.set()` 실패를 applyPatch 실패와 동일한 복구 범위에 넣을지는 미확정이다.
+- **영향 범위:** `src/app/history.ts`, `src/vdom/create.ts`, `src/app/initialize.ts`, `src/app/init.ts`, `p1_prd.md` §6·§7, `p1_function_flow.md` §6·§7, `p1_interfaces.md` §6·§7, `p1_test_cases.md` §9, `p1_test_boards.md`, `p1_history_handler_design.md`.
+- **설계 기준:** `p1_history_handler_design.md`.
+
+## P1-RESTORE-01 — 저장 항목을 실제 화면·편집기로 복원하는 경계
+
+- **상태:** accepted
+- **날짜:** 2026-11-08
+- **결정:** `restoreSnapshot(entry, actualRoot, options?)`은 저장 entry를 직접 사용하지 않고 `cloneSnapshotData(entry.vdom)`으로 복사한 뒤 `renderChildren()`, `assertAllLinked()`, 선택적 `writeEditorHTML()`을 수행한다. 옵션은 `{ editor?: HTMLTextAreaElement; restoreEditor?: boolean }`이며 `restoreEditor` 기본값은 true다.
+- **편집기 계약:** `restoreEditor !== false`이면 `editor`가 필수다. editor 존재 검사는 실제 영역을 렌더링하기 전에 수행한다. 그래야 editor 누락 오류로 실제 DOM만 먼저 바뀌는 상태를 피할 수 있다.
+- **재사용:** 새 렌더러를 만들지 않는다. `renderChildren()`과 그 내부의 `renderNode()`, `assertAllLinked()`, `cloneSnapshotData()`, `writeEditorHTML()`을 조합한다.
+- **실패 경계:** `restoreSnapshot()` 자체가 실패하면 이전 화면 보존을 보장하지 않는다. `renderChildren()`은 기존 자식을 먼저 제거한다. 복원 실패의 오류 UI·재시작 정책은 미확정이다.
+- **applyPatch 실패 복구:** `peek(0)`의 entry가 null이면 불변식 위반으로 원래 오류를 전파한다. 복원이 성공하면 `move(0, liveVDOM)` 후 원래 Patch 오류를 rethrow한다. 복원도 실패하면 원래 Patch 오류와 복원 오류를 `AggregateError`로 함께 보존한다.
+- **검증 계획:** HIST-02, HIST-05, FLOW-04·FLOW-05. `restoreEditor` true/false, editor 누락 사전 오류, entry 원본 불변, 전체 DOM 연결을 확인한다.
+- **영향 범위:** `src/app/restore.ts`, `src/app/editor.ts`, `src/app/handlers.ts`, `src/app/initialize.ts`, `p1_prd.md` §2·§6, `p1_function_flow.md` §2·§6, `p1_interfaces.md` §6, `p1_test_cases.md` FLOW·HIST, `p1_test_boards.md`, `p1_history_handler_design.md`.
+- **설계 기준:** `p1_history_handler_design.md`.
+
+## P1-CONF-03 — 중복 key·key 변경·같은 key 태그 변경 규칙
+
+- **상태:** accepted
+- **날짜:** 2026-11-08
+- **결정:**
+  - 같은 key + 같은 태그 → matched/update
+  - 같은 key + 다른 태그 → replace
+  - key 값 변경 → remove + insert
+  - 같은 부모의 중복 key → key 대응에서 제외하고 keyless 순서 기반 대응 목록에 포함
+- **이유:** key를 노드 정체성으로 사용하고, 다른 부모·이동·여러 노드 변경에도 일반적으로 동작하는 규칙을 유지하기 위해서다. 같은 key의 태그 변경은 같은 정체성의 제자리 교체로 표현하고, key 변경은 다른 노드로 본다. 중복 key는 사용자가 편집기에서 만들 수 있는 입력이므로 Patch를 중단하지 않고 순서 기반으로 완화한다.
+- **중복 key의 정확한 의미:** 어느 한쪽 목록에서라도 중복된 key는 그 비교에서 key 식별자로 사용하지 않는다. 해당 노드들은 keyless 노드와 함께 각 목록의 출현 순서로 대응하며, 다른 고유 key의 대응은 유지한다. 원본 `attributes`의 key 속성은 삭제하지 않는다.
+- **테스트 영향:** DIFF-04의 skip 조건을 해소할 수 있다. ORDER-04의 `key=d1` → `key=d2` 입력은 replace가 아니라 remove + insert를 기대하도록 수정한다. FLOW-02·HIST-05의 key 변경 “교체” 입력은 실제 명령이 remove + insert일 수 있음을 명시한다.
+- **유지:** key 속성을 실제 DOM에 렌더링하는 P1-KEY-01, keyless 형제의 순서 대응, 기존 move 규칙.
+- **검증 계획:** DIFF-04, ORDER-04, ORDER-05, FLOW-02, HIST-05. 부모 replace 자체는 DIFF-04·PATCH-04가 담당한다.
+- **영향 범위:** `src/vdom/diff/findChildMatches.ts`, `src/vdom/diff/collectNodeChanges.ts`, `p1_interfaces.md` §4, `p1_prd.md` §4, `p1_function_flow.md` §4, `p1_test_cases.md` §5·§6·§8–§10, `p1_test_boards.md`, `p1_diff_notes.md`.
+- **설계 기준:** `p1_history_handler_design.md`.

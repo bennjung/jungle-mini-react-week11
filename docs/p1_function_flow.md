@@ -2,7 +2,7 @@
 
 기준: `p1_prd.md`, `p1_test_cases.md`. 아래 함수와 코드는 호출 구조를 설명하는 설계이며 구현 코드는 아니다.
 테스트 영역은 HTML 코드 편집기, 실제 영역은 렌더링 화면이다. 요구사항 원문의 “테스트 영역 렌더링”은 HTML 문자열 편집기로 해석한다.
-구현 환경과 확정된 결정은 `p1_decisions.md`를, 함수·타입 인터페이스는 `p1_interfaces.md`를 따른다.
+구현 환경과 확정된 결정은 `p1_decisions.md`를, 함수·타입 인터페이스는 `p1_interfaces.md`를 따른다. History·복원·Handler·앱 조립의 상세 설계는 `p1_history_handler_design.md`를 따른다.
 
 합의한 참조 연결 시점은 다음과 같다.
 
@@ -48,20 +48,22 @@ handlePatch()
 ├─ diff(curVDOM, nextVDOM)               변경 명령 계산 + 유지 노드의 실제 DOM 참조 연결
 ├─ 변경 없음 → 종료                    기존 현재 VDOM과 이력 유지
 ├─ try
-│  └─ applyPatch()
+│  └─ completed = applyPatch()
 │     ├─ 이전 VDOM의 참조로 실제 DOM 변경
 │     └─ insert/replace 노드의 실제 DOM 생성·연결, 전체 연결 검증
 ├─ catch
 │  ├─ entry = saveHistory.peek(0)         현재 이력 데이터 조회
-│  ├─ liveVDOM = restoreSnapshot(entry, actualRoot, { restoreEditor: false })
+│  ├─ liveVDOM = restoreSnapshot(entry, actualRoot, {
+│  │    editor, restoreEditor: false
+│  │  })
 │  ├─ saveHistory.move(0, liveVDOM)       위치 이동 없이 live VDOM만 교체
 │  └─ rethrow
-└─ saveHistory.set(nextVDOM, html)       성공한 경우만 현재 상태 갱신·이력 저장
+└─ saveHistory.set(completed, html)       성공한 경우만 현재 상태 갱신·이력 저장
 ```
 
 `readEditorHTML()`은 HTML 코드 편집기의 문자열을 읽는다.
 
-History의 초기 상태는 이벤트 연결 전에 준비한다. 변경 없는 Patch는 DOM 반영·이력 저장을 생략하고 기존 현재 VDOM을 유지한다. 실패한 Patch는 저장하지 않는다. applyPatch 실패 시 현재 이력 데이터로 실제 영역만 복원하고 편집기 HTML은 유지하며, History의 길이·현재 위치·저장 데이터는 변경하지 않는다. 오류는 호출자에게 전달한다. 일반 Patch에서는 편집 내용을 그대로 두고 실제 영역의 변경 부분만 갱신한다.
+History의 초기 상태는 이벤트 연결 전에 준비한다. 변경 없는 Patch는 DOM 반영·이력 저장을 생략하고 기존 현재 VDOM을 유지한다. 실패한 Patch는 저장하지 않는다. applyPatch 실패 시 현재 이력 데이터로 실제 영역만 복원하고 편집기 HTML은 유지하며, History의 길이·현재 위치·저장 데이터는 변경하지 않는다. 오류는 호출자에게 전달한다. 복원 자체도 실패하면 원래 Patch 오류와 복원 오류를 `AggregateError`로 함께 보존하며, 복원 실패 UI·재시작 정책은 미확정이다. 일반 Patch에서는 편집 내용을 그대로 두고 실제 영역의 변경 부분만 갱신한다.
 
 ### 뒤로가기·앞으로가기
 
@@ -137,7 +139,7 @@ Diff는 실제 DOM과 이전 VDOM을 수정하지 않는다. attributes와 prope
 요소의 `attributes`에 이름이 `key`인 속성이 있으면 그 값을 해당 요소의 식별자로 사용한다. 예: `<li key="a">`.
 key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다. key가 있는 요소는 위치가 바뀌어도 key로 대응한다. keyed/unkeyed가 섞여도 각각의 규칙을 적용한다.
 코드 파싱 때마다 임시 DOM 객체가 새로 생성되므로, 임시 DOM 객체의 직접 참조로 이전·다음 노드를 식별하지 않는다.
-key가 없는 노드의 순서 변경은 move로 보장하지 않는다. 같은 부모 안의 중복 key, 같은 key의 태그 변경, key 값 자체가 바뀌는 경우의 대응은 아직 확정하지 않는다. 이 항목은 테스트 문서의 CONF-03에 대응한다.
+key가 없는 노드의 순서 변경은 move로 보장하지 않는다. 노드 식별 규칙은 P1-CONF-03으로 확정한다. 같은 key + 같은 태그는 matched/update, 같은 key + 다른 태그는 replace, key 값 변경은 remove + insert다. 같은 부모에서 중복된 key는 key 식별자로 사용하지 않고 keyless 순서 대응 목록에 포함한다.
 
 ### 명령 적용 순서
 
@@ -177,14 +179,16 @@ initializeDOM(sampleHTML)
 ├─ parseHTML(sampleHTML)                샘플 코드 → 임시 DOM
 ├─ createSnapshot(parsedRoot)           샘플 VDOM 전체의 dom은 null
 ├─ diff(emptyVDOM, sampleVDOM)
-├─ applyPatch()                         실제 화면 생성·샘플 VDOM 전체의 dom 연결
-├─ writeEditorHTML(sampleHTML)          편집기에 HTML 문자열 표시
-└─ saveHistory.set(sampleVDOM, sampleHTML)
+├─ completed = applyPatch()              실제 화면 생성·샘플 VDOM 전체의 dom 연결
+├─ writeEditorHTML(sampleHTML)           편집기에 HTML 문자열 표시
+└─ saveHistory.set(completed, sampleHTML)
 
 restoreSnapshot(entry, actualRoot, options = {})
+├─ if (options.restoreEditor !== false && !options.editor) throw
 ├─ root = cloneSnapshotData(entry.vdom)  데이터 복사, dom 참조 초기화
 ├─ renderChildren(root, actualRoot)      실제 영역 내용 교체·dom 재연결
-├─ if (options.restoreEditor !== false) writeEditorHTML(entry.html)
+├─ assertAllLinked(root, actualRoot)     전체 참조 연결 검증
+├─ if (options.restoreEditor !== false) writeEditorHTML(options.editor, entry.html)
 └─ return root
 
 renderChildren(root, actualRoot)
@@ -199,7 +203,7 @@ renderNode(vnode)
 └─ properties 적용
 ```
 
-`restoreSnapshot()`의 `restoreEditor` 기본값은 true다. applyPatch 실패 복구는 false로 호출해 실제 영역만 복원하고 편집기 HTML은 유지한다.
+`restoreSnapshot()`의 `restoreEditor` 기본값은 true다. editor 필수 검사는 실제 영역 렌더링 전에 수행한다. applyPatch 실패 복구는 `restoreEditor: false`로 호출해 실제 영역만 복원하고 편집기 HTML은 유지한다. 복원은 `cloneSnapshotData`, `renderChildren`, `assertAllLinked`, `writeEditorHTML`을 재사용하며 새 렌더러를 추가하지 않는다.
 
 초기화는 빈 이전 VDOM을 비교 기준으로 사용하므로 Diff가 연결할 유지 자식은 없다. 샘플 `VRoot.dom`은 Diff에서 실제 컨테이너에 연결되고, 삽입할 모든 `VNode`와 하위 트리의 `dom`은 Patch에서 연결된다. 빈 이전 VDOM의 `VRoot`는 작업 대상인 실제 컨테이너를 가리킨다.
 
@@ -214,14 +218,16 @@ SELECT의 상태는 OPTION 생성 후 적용한다. 다중 선택은 OPTION.sele
 
 | 함수 | 역할 |
 | --- | --- |
-| `createHistory()` | 저장 배열·현재 위치·현재 연결된 VDOM을 클로저 안에서 관리 |
+| `createHistory()` | 저장 배열·현재 위치·현재 연결된 VDOM을 클로저 안에서 관리. 최대 50개 |
 | `saveHistory.get()` | 현재 위치의 상태에 대응하며 실제 DOM에 연결된 VDOM 반환 |
 | `saveHistory.set(vdom, html)` | 현재 위치 뒤 이력 제거, VDOM 데이터와 코드 원문 저장, 현재 위치·VDOM 갱신 |
 | `saveHistory.peek(direction)` | 이동할 위치의 `{ vdom, html }` 조회. `0`이면 현재 위치, 범위 밖이면 null |
 | `saveHistory.move(direction, liveVDOM)` | 새 이력 추가 없이 현재 위치와 연결된 VDOM 갱신. `0`이면 위치 이동 없이 live VDOM만 교체 |
 
 저장 배열에는 DOM 참조를 제외한 VDOM 데이터 복사본과 HTML 원문을 보관한다. 원문을 함께 저장해 들여쓰기 등 코드 표현도 복원한다. 현재 렌더링용 VDOM만 DOM 참조를 포함하고, 과거 데이터는 수정하지 않는다.
-applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `restoreSnapshot(..., { restoreEditor: false })`로 실제 영역만 복원한 뒤 `move(0, liveVDOM)`으로 live VDOM만 교체한다.
+History는 최대 50개를 보관한다. `set()`은 현재 위치 뒤의 미래 이력을 먼저 제거한 뒤 새 항목을 추가하고, 50개를 넘으면 가장 오래된 항목을 제거해 index를 보정한다.
+첫 `set()` 전 `get()`은 오류, 범위 밖 `peek()`은 null, 범위 밖 `move()`는 완전한 no-op이다. `move(0, liveVDOM)`은 위치를 유지하고 currentLive만 교체한다.
+applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `restoreSnapshot(..., { editor, restoreEditor: false })`로 실제 영역만 복원한 뒤 `move(0, liveVDOM)`으로 live VDOM만 교체한다.
 현재 위치와 렌더링용 VDOM의 갱신은 History 내부에서 함께 처리한다. 새 상태 저장은 Patch 성공으로 다음 VDOM의 참조 연결이 완성된 뒤 수행한다. 변경 없는 경우에는 Diff가 참조를 연결한 다음 VDOM으로 현재 상태를 바꾸지 않는다. 속성 나열 순서처럼 DOM 데이터가 같으면 새 이력을 추가하지 않으며, 실제 텍스트 노드가 달라지는 공백 변경은 별도로 비교한다.
 
 ## 8. 테스트 연결
@@ -236,6 +242,6 @@ applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `
 | 유지 노드 참조 연결 | DIFF-01–DIFF-09 |
 | 실제 DOM 연산·새 노드 참조 연결 | PATCH-01–PATCH-08 |
 | 단계별·연속 Patch·변경 없음·실패 복구 | FLOW-01–FLOW-05 |
-| History 저장·복원·복원 후 Patch | HIST-01–HIST-06 |
+| History 저장·복원·복원 후 Patch | HIST-01–HIST-07 |
 | Snapshot → Diff → Patch 실제 연결 | IT-01–IT-08 |
 | 중복 key·key 변경·태그 변경 규칙 | CONF-03 |
