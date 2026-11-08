@@ -24,6 +24,7 @@ export function createHTMLContext() {
   const history = {
     get: vi.fn(() => root),
     set: vi.fn<(vdom: VRoot, html: string) => void>(),
+    peek: vi.fn((_direction: -1 | 0 | 1) => null),
     move: vi.fn<(direction: -1 | 0 | 1, liveVDOM: VRoot) => void>()
   };
   const app = init({
@@ -42,6 +43,7 @@ export function createHTMLContext() {
       next.dom = container;
       paragraph.dom = paragraphDom;
       text.dom = textDom;
+      return next;
     },
     createHandlers: () => ({ handlePatch: vi.fn(), handleHistoryMove: vi.fn() })
   });

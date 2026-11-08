@@ -15,3 +15,7 @@ export const SAMPLE_HTML = `<div class="sample" id="sample-app">
   </ul>
 </div>
 `;
+
+export function getSampleHTML(): string {
+  return SAMPLE_HTML;
+}

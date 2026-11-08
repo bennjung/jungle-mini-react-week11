@@ -225,6 +225,7 @@
 - **상한:** 페이지 세션 메모리 기준 최대 50개다. `set()`에서 미래 이력을 제거한 뒤 새 항목을 추가하고, 50개를 넘으면 가장 오래된 항목을 제거하며 index를 보정한다.
 - **경계:** 첫 `set()` 전 `get()`은 오류, 범위 밖 `peek()`은 null, 범위 밖 `move()`는 완전한 no-op, `move(0, liveVDOM)`은 index를 유지하고 currentLive만 교체한다.
 - **검증 계획:** HIST-01, HIST-03의 조회, HIST-04의 저장, HIST-07의 상한·퇴거. `peek`이 위치를 바꾸지 않고 저장 데이터를 수정하지 않는지 확인한다.
+- **구현·검증 결과:** 2026-11-08 `src/app/history.ts`와 `cloneSnapshotData()`를 구현했다. `tests/unit/history.test.ts`에서 HIST-01·HIST-03·HIST-04·HIST-07, 빈 상태, 범위 밖 이동, `move(0)`, 저장 데이터 불변, 50개 퇴거를 검증했다. 전체 22개 테스트 파일 193개가 통과했고 skip·todo는 0개다.
 - **미확정·한계:** 하나의 초대형 VDOM이 차지하는 메모리는 50개 상한만으로 제한되지 않는다. `history.set()` 실패를 applyPatch 실패와 동일한 복구 범위에 넣을지는 미확정이다.
 - **영향 범위:** `src/app/history.ts`, `src/vdom/create.ts`, `src/app/initialize.ts`, `src/app/init.ts`, `p1_prd.md` §6·§7, `p1_function_flow.md` §6·§7, `p1_interfaces.md` §6·§7, `p1_test_cases.md` §9, `p1_test_boards.md`, `p1_history_handler_design.md`.
 - **설계 기준:** `p1_history_handler_design.md`.
@@ -239,6 +240,7 @@
 - **실패 경계:** `restoreSnapshot()` 자체가 실패하면 이전 화면 보존을 보장하지 않는다. `renderChildren()`은 기존 자식을 먼저 제거한다. 복원 실패의 오류 UI·재시작 정책은 미확정이다.
 - **applyPatch 실패 복구:** `peek(0)`의 entry가 null이면 불변식 위반으로 원래 오류를 전파한다. 복원이 성공하면 `move(0, liveVDOM)` 후 원래 Patch 오류를 rethrow한다. 복원도 실패하면 원래 Patch 오류와 복원 오류를 `AggregateError`로 함께 보존한다.
 - **검증 계획:** HIST-02, HIST-05, FLOW-04·FLOW-05. `restoreEditor` true/false, editor 누락 사전 오류, entry 원본 불변, 전체 DOM 연결을 확인한다.
+- **구현·검증 결과:** 2026-11-08 `src/app/restore.ts`, `writeEditorHTML()`, `handlers.ts`를 구현했다. `tests/unit/restore.test.ts`, `tests/integration/handlers.test.ts`, `tests/integration/app-flow.test.ts`에서 HIST-02·HIST-05, FLOW-01~05, editor 옵션, 누락 사전 오류, 부분 DOM 변경 후 복구·재시도를 검증했다. 전체 테스트 통과·skip/todo 0개, 실제 브라우저의 Patch·뒤로·앞으로 흐름도 확인했다.
 - **영향 범위:** `src/app/restore.ts`, `src/app/editor.ts`, `src/app/handlers.ts`, `src/app/initialize.ts`, `p1_prd.md` §2·§6, `p1_function_flow.md` §2·§6, `p1_interfaces.md` §6, `p1_test_cases.md` FLOW·HIST, `p1_test_boards.md`, `p1_history_handler_design.md`.
 - **설계 기준:** `p1_history_handler_design.md`.
 
@@ -256,5 +258,6 @@
 - **테스트 영향:** DIFF-04의 skip 조건을 해소할 수 있다. ORDER-04의 `key=d1` → `key=d2` 입력은 replace가 아니라 remove + insert를 기대하도록 수정한다. FLOW-02·HIST-05의 key 변경 “교체” 입력은 실제 명령이 remove + insert일 수 있음을 명시한다.
 - **유지:** key 속성을 실제 DOM에 렌더링하는 P1-KEY-01, keyless 형제의 순서 대응, 기존 move 규칙.
 - **검증 계획:** DIFF-04, ORDER-04, ORDER-05, FLOW-02, HIST-05. 부모 replace 자체는 DIFF-04·PATCH-04가 담당한다.
+- **구현·검증 결과:** 2026-11-08 DIFF-04와 ORDER-04의 skip을 해소하고 key 변경 remove + insert 기대를 반영했다. ORDER-01~05 Patch 적용 5개와 MOVE-07 연계 2개 todo도 실제 Diff·orderChanges·applyPatch로 구현했다. 관련 67개 테스트가 통과했고 전체 테스트의 skip·todo는 0개다.
 - **영향 범위:** `src/vdom/diff/findChildMatches.ts`, `src/vdom/diff/collectNodeChanges.ts`, `p1_interfaces.md` §4, `p1_prd.md` §4, `p1_function_flow.md` §4, `p1_test_cases.md` §5·§6·§8–§10, `p1_test_boards.md`, `p1_diff_notes.md`.
 - **설계 기준:** `p1_history_handler_design.md`.

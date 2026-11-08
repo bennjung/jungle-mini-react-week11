@@ -44,7 +44,9 @@ function createMocks() {
       const entry = saved.at(-1);
       if (!entry) throw new Error('테스트 대역에 저장된 VDOM이 없습니다.');
       return entry.vdom;
-    })
+    }),
+    peek: vi.fn((_direction: -1 | 0 | 1) => null),
+    move: vi.fn((_direction: -1 | 0 | 1, _liveVDOM: VRoot) => {})
   };
   const dependencies = {
     parseHTML: vi.fn(parseHTML),
@@ -69,6 +71,7 @@ function createMocks() {
       section.dom = sectionDom;
       paragraph.dom = paragraphDom;
       text.dom = textDom;
+      return next;
     })
   };
   return { elements, sampleVDOM, saved, history, dependencies };

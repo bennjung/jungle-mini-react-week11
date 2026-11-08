@@ -1,6 +1,20 @@
+import { createHandlers } from './app/handlers';
+import { createHistory } from './app/history';
 import { init } from './app/init';
+import { getSampleHTML } from './sample';
+import { createSnapshot, parseHTML } from './vdom/create';
+import { diff } from './vdom/diff';
+import { applyPatch } from './vdom/patch';
 
-const app = init();
+const app = init({
+  parseHTML,
+  createSnapshot,
+  diff,
+  applyPatch,
+  createHistory,
+  getSampleHTML,
+  createHandlers
+});
 
 app.elements.editor.addEventListener('keydown', (event) => {
   if (event.key !== 'Tab') return;

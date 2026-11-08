@@ -75,3 +75,28 @@ export function createEmptyVDOM(actualRoot: Element): VRoot {
     dom: actualRoot
   };
 }
+
+/**
+ * History 저장·복원에 사용할 데이터 전용 복사본을 만든다.
+ * attributes는 새 객체 배열로, properties는 현재 propertySchema가 만드는
+ * 원시값 기준의 얕은 복사로, childNodes는 재귀로 복사한다.
+ * 복사본의 모든 dom은 null이며 입력 VDOM은 수정하지 않는다.
+ */
+export function cloneSnapshotData(vdom: VRoot): VRoot {
+  return {
+    childNodes: vdom.childNodes.map(cloneNodeData),
+    dom: null
+  };
+}
+
+function cloneNodeData(node: VNode): VNode {
+  return {
+    nodeType: node.nodeType,
+    tagName: node.tagName,
+    attributes: node.attributes.map(({ name, value }) => ({ name, value })),
+    nodeValue: node.nodeValue,
+    childNodes: node.childNodes.map(cloneNodeData),
+    properties: { ...node.properties },
+    dom: null
+  };
+}

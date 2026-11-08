@@ -1,6 +1,7 @@
 import type { VRoot } from '../vdom/types';
+import type { History } from './history';
 import { createInitializer } from './initialize';
-import type { InitializationHistory, InitializerDependencies } from './initialize';
+import type { InitializerDependencies } from './initialize';
 
 export interface AppElements {
   editor: HTMLTextAreaElement;
@@ -16,9 +17,9 @@ export interface AppHandlers {
 }
 
 export interface InitDependencies extends InitializerDependencies {
-  createHistory(): InitializationHistory;
+  createHistory(): History;
   getSampleHTML(): string;
-  createHandlers(elements: AppElements, history: InitializationHistory): AppHandlers;
+  createHandlers(elements: AppElements, history: History): AppHandlers;
 }
 
 export function getElements(): AppElements {

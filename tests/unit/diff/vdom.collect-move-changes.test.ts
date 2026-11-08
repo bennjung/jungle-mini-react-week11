@@ -1,7 +1,9 @@
 import { describe, expect, it } from 'vitest';
+import { diff } from '../../../src/vdom/diff';
 import { collectMoveChanges } from '../../../src/vdom/diff/collectMoveChanges';
 import { findChildMatches } from '../../../src/vdom/diff/findChildMatches';
 import { orderChanges } from '../../../src/vdom/diff/orderChanges';
+import { applyPatch } from '../../../src/vdom/patch';
 import type { DiffCommand, VNode, VRoot } from '../../../src/vdom/types';
 
 const cases = [
@@ -161,7 +163,113 @@ describe('MOVE-06: 네 형제의 모든 목표 순서', () => {
   );
 });
 
-describe('MOVE-07: 실제 Patch 연계 검증 — Patch 구현 전 보류', () => {
-  it.todo('이동·삽입 혼합: abc → cxab, 실제 orderChanges와 applyPatch 후 목표 순서·기존 객체·새 참조 확인');
-  it.todo('이동·삭제 혼합: abcd → dac, 실제 orderChanges와 applyPatch 후 제거 대상 분리·나머지 객체 확인');
+function labelOf(node: VNode): string {
+  const label = node.attributes.find(({ name }) => name === 'key')?.value;
+  if (label === undefined) throw new Error('key가 있는 테스트 노드가 아니다.');
+  return label;
+}
+
+/** 실제 diff가 유지 노드를 연결할 수 있도록 dom 참조를 준비한 Patch 연계 입력. */
+function patchFixture(prevLabels: string[], nextLabels: string[]) {
+  const actual = document.createElement('ul');
+  const prev: VRoot = {
+    childNodes: prevLabels.map((label) => element(label, true, true)),
+    dom: actual
+  };
+  for (const node of prev.childNodes) actual.appendChild(node.dom!);
+  const next: VRoot = {
+    childNodes: nextLabels.map((label) => element(label, true, false)),
+    dom: null
+  };
+  return { actual, prev, next };
+}
+
+function keysOf(parent: Element): Array<string | null> {
+  return Array.from(parent.children, (node) => node.getAttribute('key'));
+}
+
+describe('MOVE-07: 실제 orderChanges·applyPatch 연계', () => {
+  it('이동·삽입 혼합: abc → cxab, 목표 순서·기존 객체·새 참조 확인', () => {
+    const input = patchFixture(['a', 'b', 'c'], ['c', 'x', 'a', 'b']);
+    const prevByLabel = new Map(input.prev.childNodes.map((node) => [labelOf(node), node]));
+    const changes = diff(input.prev, input.next);
+    const ordered = orderChanges(changes);
+    expect(ordered).toHaveLength(changes.length);
+
+    const inserts = ordered.filter((change) => change.type === 'insert');
+    const moves = ordered.filter((change) => change.type === 'move');
+    expect(inserts).toHaveLength(1);
+    expect(moves).toHaveLength(1);
+
+    const insert = inserts[0];
+    const move = moves[0];
+    if (!insert || insert.type !== 'insert' || !move || move.type !== 'move') {
+      throw new Error('이동·삽입 명령이 아니다.');
+    }
+    expect(insert.node).toBe(input.next.childNodes[1]);
+    expect(labelOf(insert.node)).toBe('x');
+    expect(insert.parent).toBe(input.next);
+    expect(insert.before).toBe(input.next.childNodes[2]);
+    expect(move.target).toBe(prevByLabel.get('c'));
+    expect(move.parent).toBe(input.next);
+    expect(move.before).toBe(input.next.childNodes[1]);
+    // move의 기준 형제인 x가 먼저 생성되어야 한다.
+    expect(ordered.indexOf(insert)).toBeLessThan(ordered.indexOf(move));
+
+    const result = applyPatch(input.prev, input.next, ordered);
+
+    expect(result).toBe(input.next);
+    expect(input.next.dom).toBe(input.actual);
+    expect(keysOf(input.actual)).toEqual(['c', 'x', 'a', 'b']);
+    expect(input.actual.childNodes).toHaveLength(input.next.childNodes.length);
+    expect(input.next.childNodes[0]?.dom).toBe(prevByLabel.get('c')?.dom);
+    expect(input.next.childNodes[2]?.dom).toBe(prevByLabel.get('a')?.dom);
+    expect(input.next.childNodes[3]?.dom).toBe(prevByLabel.get('b')?.dom);
+    expect(input.next.childNodes[0]?.dom).toBe(input.actual.childNodes[0]);
+    expect(input.next.childNodes[1]?.dom).toBe(input.actual.childNodes[1]);
+    expect(input.next.childNodes[2]?.dom).toBe(input.actual.childNodes[2]);
+    expect(input.next.childNodes[3]?.dom).toBe(input.actual.childNodes[3]);
+    // 새 x는 기존 객체가 아니며 생성된 실제 노드를 가리킨다.
+    expect(prevByLabel.has('x')).toBe(false);
+    expect(input.next.childNodes[1]?.dom).not.toBeNull();
+    expect(input.next.childNodes[1]?.dom).toBe(input.actual.childNodes[1]);
+    for (const node of input.next.childNodes) expect(node.dom).not.toBeNull();
+  });
+
+  it('이동·삭제 혼합: abcd → dac, 제거 대상 분리·나머지 객체 확인', () => {
+    const input = patchFixture(['a', 'b', 'c', 'd'], ['d', 'a', 'c']);
+    const prevByLabel = new Map(input.prev.childNodes.map((node) => [labelOf(node), node]));
+    const changes = diff(input.prev, input.next);
+    const ordered = orderChanges(changes);
+    expect(ordered).toHaveLength(changes.length);
+
+    const removals = ordered.filter((change) => change.type === 'remove');
+    const moves = ordered.filter((change) => change.type === 'move');
+    expect(removals).toHaveLength(1);
+    expect(removals[0]?.target).toBe(prevByLabel.get('b'));
+    expect(moves).toHaveLength(1);
+
+    const move = moves[0];
+    if (!move || move.type !== 'move') throw new Error('이동 명령이 아니다.');
+    expect(move.target).toBe(prevByLabel.get('d'));
+    expect(move.parent).toBe(input.next);
+    expect(move.before).toBe(input.next.childNodes[1]);
+    expect(ordered.some((change) => change.type === 'insert')).toBe(false);
+
+    applyPatch(input.prev, input.next, ordered);
+
+    expect(input.next.dom).toBe(input.actual);
+    expect(keysOf(input.actual)).toEqual(['d', 'a', 'c']);
+    expect(input.actual.childNodes).toHaveLength(input.next.childNodes.length);
+    expect(input.next.childNodes[0]?.dom).toBe(prevByLabel.get('d')?.dom);
+    expect(input.next.childNodes[1]?.dom).toBe(prevByLabel.get('a')?.dom);
+    expect(input.next.childNodes[2]?.dom).toBe(prevByLabel.get('c')?.dom);
+    expect(input.next.childNodes[0]?.dom).toBe(input.actual.childNodes[0]);
+    expect(input.next.childNodes[1]?.dom).toBe(input.actual.childNodes[1]);
+    expect(input.next.childNodes[2]?.dom).toBe(input.actual.childNodes[2]);
+    // 삭제된 b는 실제 영역에서 분리되고 나머지 대상은 재조작되지 않는다.
+    expect(prevByLabel.get('b')?.dom?.parentNode).toBeNull();
+    expect(input.actual.contains(prevByLabel.get('b')?.dom ?? null)).toBe(false);
+    for (const node of input.next.childNodes) expect(node.dom).not.toBeNull();
+  });
 });

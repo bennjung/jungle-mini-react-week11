@@ -1,5 +1,5 @@
 import { afterEach, expect, it } from 'vitest';
-import { readEditorHTML } from '../../src/app/editor';
+import { readEditorHTML, writeEditorHTML } from '../../src/app/editor';
 import { createHTMLContext, expectHistoryUnchanged } from '../helpers/html.context';
 
 afterEach(() => {
@@ -16,6 +16,22 @@ it('HTML-01: 편집기 요소에서 줄바꿈·들여쓰기를 포함한 현재 
   const html = readEditorHTML(editor);
 
   expect(html).toBe('<div>\n  <p>A</p>\n</div>');
+  expect(editor.value).toBe('<div>\n  <p>A</p>\n</div>');
+  expect(editor.textContent).toBe('편집기의 기본 내용');
+  expect(actualRoot.innerHTML).toBe('<p>기존</p>');
+  expect(actualRoot.firstChild).toBe(existingParagraph);
+  expectHistoryUnchanged(context);
+});
+
+it('writeEditorHTML: 편집기 값만 HTML 원문으로 교체하고 실제 영역·History는 유지한다', () => {
+  const context = createHTMLContext();
+  const { editor, actualRoot } = context.elements;
+  editor.textContent = '편집기의 기본 내용';
+  editor.value = '<p>이전</p>';
+  const existingParagraph = actualRoot.firstChild;
+
+  writeEditorHTML(editor, '<div>\n  <p>A</p>\n</div>');
+
   expect(editor.value).toBe('<div>\n  <p>A</p>\n</div>');
   expect(editor.textContent).toBe('편집기의 기본 내용');
   expect(actualRoot.innerHTML).toBe('<p>기존</p>');

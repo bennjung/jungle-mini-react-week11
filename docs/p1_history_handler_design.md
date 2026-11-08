@@ -1,10 +1,11 @@
 # Phase 1 — History·Handler·앱 연결 설계
 
-- 상태: 설계 확정안
+- 상태: 설계 확정 및 구현 완료
 - 기준 브랜치: `temp/integrate-jung-patch-chan95821-diff`
-- 기준 커밋: `3c3d039`
+- 설계 기준 커밋: `3c3d039`
 - 검증: GPT-6.1 Sol subagent 교차 검증 반영
-- 구현 범위: VDOM·Diff·Patch는 완료된 상태에서 History, 복원, Handler, 앱 조립, 통합 검증을 완성한다.
+- 구현 검증: 2026-11-08 `npm run check` 22개 파일·193개 테스트 통과, skip/todo 0개, `npm run build` 통과, 실제 브라우저 흐름 확인
+- 구현 범위: VDOM·Diff·Patch 위에 History, 복원, Handler, 앱 조립, 통합 검증을 완성했다.
 
 ## 1. 목표
 
