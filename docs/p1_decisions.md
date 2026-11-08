@@ -66,6 +66,15 @@
 - Patch는 `P1-PATCH-LINK-01` 확정 후 실제 계약에 맞춘다. 완성된 VDOM을 반환하는 계약이면 초기화의 저장 대상도 그 계약에 맞춰 연결한다.
 - 통합 테스트는 실제 VDOM 생성·Diff·Patch·History·핸들러를 사용한다. Snapshot/Diff 후 전체 `dom: null`, Patch 후 전체 참조 연결, 초기 이력 1개, 실제 버튼 변경·복원과 이력 추가 횟수를 확인한다.
 
+## P1-VDOM-PARENT-01 — 명령의 부모 타입에 VRoot 반영
+
+- **상태:** accepted
+- **날짜:** 2026-11-07
+- **결정:** insert·move 명령 및 관련 함수 설명의 `parent`를 `VNode | VRoot`로 동기화한다. 최상위 자식의 부모는 다음 `VRoot`다.
+- **이유:** 기존 VRoot 도입 결정과 최상위 삽입 시나리오를 타입 계약에 일치시킨다. 사용자가 부모 타입과 관련 공용 문서의 동기화를 승인했다.
+- **영향 범위:** `src/vdom/types.ts`, `p1_interfaces.md`, `p1_function_flow.md`, `p1_prd.md`, `p1_test_cases.md`, 개인 Diff 작업 문서.
+- **유지:** 명령의 의미·노드 참조 방향과 기존 테스트 기대 결과, Patch의 미확정 내부 연결 방식은 변경하지 않는다.
+
 ## P1-ROLLBACK-01 — applyPatch 실패 시 C1 복구
 
 - **상태:** accepted
@@ -172,3 +181,14 @@
   - `src/vdom/link.ts`, `src/vdom/patch.ts`, `tests/unit/vdom.patch.test.ts`
 - **대체:** P1-PATCH-LINK-01 A안을 대체한다.
 - **미확정:** diff가 연결을 수행할 때 prev VDOM이 실제 DOM에 연결되어 있어야 한다는 전제의 오류 처리, diff 실패 시 부분 연결된 next VDOM의 폐기 정책.
+- **개인 Diff 코드 반영:** `diff()`에서 루트 연결, `collectNodeChanges()`에서 `linkNode()` 호출과 기존 하위 함수 취합·재귀를 수행한다. `findChildMatches()`의 기존 결과를 사용하며 전체 재매칭은 추가하지 않는다. 사용자의 정정에 따라 임의 추가한 격리 테스트를 제거하고, 공용 명세 DIFF-01–DIFF-09의 관련 연결 검증만 기존 테스트에 반영했다. 미구현 하위 함수는 대체하지 않으며, 전체 테스트는 32개 통과·기존 20개 실패다. 상세 범위·검증 결과는 `p1_diff_notes.md` §14를 따른다.
+
+## P1-PROPERTY-SNAPSHOT-01 — DOM에서 읽은 프로퍼티 상태를 비교한다
+
+- **상태:** accepted
+- **결정:** DOM → VDOM 생성 시 `readProperties()`는 태그별 고정 `propertySchema`의 모든 항목을 파싱된 DOM에서 읽는다. HTML 속성이 없거나 값이 false·빈 문자열이어도 이름을 생략하지 않는다. Diff는 기본값 추측·재설정 로직을 추가하지 않는다.
+- **이유:** HTML에서 checked 속성을 지운 새 DOM에도 checked 프로퍼티는 false로 존재한다. 생성기가 이를 수집하면 기존 true와의 비교로 `setProperties`가 계산되며 표준 DOM 프로퍼티 삭제가 필요하지 않다.
+- **전제:** 같은 생성 규칙과 태그의 스냅샷을 비교한다. 생성기는 아직 미구현이므로 이 내용은 구현 완료 주장이 아닌 생성 계약이다.
+- **유지:** 기존 `removeProperties` 타입과 함수 단위 추가·제거 시험은 삭제하지 않는다. 일반 데이터 레코드에서 이름이 사라진 것을 검출하는 계약과 실제 생성 경로의 도달 가능성을 구분한다.
+- **제외:** 표준 DOM 프로퍼티에 대한 delete나 기본값 리셋을 구현하지 않는다. 새로운 생성 경로가 프로퍼티 이름 생략을 허용하게 되면 실제 적용 정책을 재논의한다.
+- **영향 범위:** PRD, 함수 흐름, 인터페이스, 테스트 명세의 생성·프로퍼티 설명. 실행 코드와 기존 테스트 기대 결과는 변경하지 않는다.

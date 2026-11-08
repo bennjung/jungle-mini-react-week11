@@ -125,7 +125,7 @@ diff(prevRoot, nextRoot)
 │  ├─ 같은 type/tag → linkNode()       prev.dom을 next.dom에 연결
 │  ├─ 텍스트 변경 → update
 │  ├─ diffAttributes() → update의 속성 데이터
-│  ├─ diffProperties() → update의 properties 데이터
+│  ├─ findPropertyUpdates() → update의 setProperties·removeProperties 데이터
 │  └─ diffChildren()
 │     ├─ matchChildren()               key attribute 우선, key 없는 노드는 부모 안 순서로 대응
 │     ├─ 새 노드 → insert
@@ -205,7 +205,7 @@ renderNode(vnode)
 
 `restoreSnapshot()`의 `restoreEditor` 기본값은 true다. applyPatch 실패 복구는 false로 호출해 실제 영역만 복원하고 편집기 HTML은 유지한다.
 
-초기화는 빈 이전 VDOM을 비교 기준으로 사용하므로 Diff가 연결할 유지 노드가 없고, 샘플 `VRoot`와 모든 `VNode`의 `dom`은 Patch 성공 후에 전체 연결된다. 빈 이전 VDOM의 `VRoot`는 작업 대상인 실제 컨테이너를 가리킨다.
+초기화는 빈 이전 VDOM을 비교 기준으로 사용하므로 Diff가 연결할 유지 자식은 없다. 샘플 `VRoot.dom`은 Diff에서 실제 컨테이너에 연결되고, 삽입할 모든 `VNode`와 하위 트리의 `dom`은 Patch에서 연결된다. 빈 이전 VDOM의 `VRoot`는 작업 대상인 실제 컨테이너를 가리킨다.
 
 초기 실제 영역은 비어 있다는 전제다. 이미 샘플 DOM이 있는 페이지에서는 이를 빈 루트로 간주하면 중복 생성되므로 초기화 경로를 혼용하지 않는다.
 최상위 VDOM은 실제 영역 컨테이너에 대응하는 `VRoot`이며, 컨테이너 자체의 태그·속성은 Diff하지 않는다. 이력 복원 시 `VRoot.dom`도 현재 `actualRoot`로 연결한다.
@@ -235,7 +235,7 @@ applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `
 | 초기화·버튼 연결 | INIT-01–INIT-02 |
 | HTML 읽기·파싱 | HTML-01–HTML-03 |
 | 스냅샷 데이터·실제 DOM 참조 없음 | SNAP-01–SNAP-06 |
-| 순수한 변경 계산 | DIFF-01–DIFF-09 |
+| 변경 계산·다음 VDOM의 유지 노드 연결 | DIFF-01–DIFF-09 |
 | 명령 의존성·중복 방지 | ORDER-01–ORDER-05 |
 | 유지 노드 참조 연결 | DIFF-01–DIFF-09 |
 | 실제 DOM 연산·새 노드 참조 연결 | PATCH-01–PATCH-08 |
@@ -278,7 +278,7 @@ const propertySchema = {
 ```
 
 - 스냅샷은 현재 값을 `attributes`와 별도로 `properties`에 저장한다.
-- Diff는 `properties`의 변경값을 찾아 `update` 명령에 담는다.
+- Diff는 `properties`의 추가·변경값과 사라진 이름을 각각 `setProperties`, `removeProperties`에 담는다. 생성기는 태그별 스키마 항목을 파싱된 DOM에서 빠짐없이 읽는다. 같은 태그의 정상 생성 경로에서 HTML 속성을 지워도 DOM 프로퍼티 값은 수집되므로 `setProperties`로 반영하며 Diff가 기본값을 추측하지 않는다. 기존 제거 데이터 계약은 유지하고 실제 DOM의 프로퍼티 제거 정책은 구현하지 않는다(P1-PROPERTY-SNAPSHOT-01).
 - 렌더링·Patch·이력 복원 시 해당 값을 실제 DOM 프로퍼티에 적용한다.
 
 요소의 `key` attribute를 식별자로 사용한다. `key`는 `attributes`에서 제거하지 않고 실제 DOM에도 렌더링한다. key가 없는 요소와 텍스트 노드는 부모 안의 자식 순서로 대응한다. 편집기의 HTML 원문은 History의 html로 함께 저장하며 VDOM의 실제 DOM 참조와 구분한다.
@@ -335,14 +335,14 @@ const propertySchema = {
 
 #### update — 입력·선택 상태
 
-변경된 값을 실제 DOM 프로퍼티에 적용한다.
+설정할 값과 VDOM에서 사라진 프로퍼티 이름을 구분한다. 제거 명령을 실제 DOM에 적용하는 방법은 미확정이다.
 
 ```json
 {
   "type": "update",
   "target": "<기존 요소 VDOM 객체>",
   "data": {
-    "properties": {
+    "setProperties": {
       "value": "사용자 입력"
     }
   }

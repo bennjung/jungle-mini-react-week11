@@ -62,7 +62,7 @@ export function readProperties(element: Element): VNodeProperties;
 - `createEmptyVDOM()`은 `{ childNodes: [], dom: actualRoot }`를 반환한다. 초기화의 비교 기준이다.
 - `snapshotNode()`는 주석이면 null을 반환한다.
 - `readAttributes()`는 `key`를 포함한 모든 속성을 `{ name, value }`로 복사한다.
-- `readProperties()`는 `propertySchema`에 지정된 현재 DOM 프로퍼티만 읽는다.
+- `readProperties()`는 `propertySchema`에 지정된 현재 DOM 프로퍼티를 빠짐없이 읽는다. HTML 속성의 존재 여부나 값의 참·거짓으로 항목을 생략하지 않는다. 기본값을 추측해 채우지 않고 파싱된 DOM 값을 그대로 수집한다. 이 생성 계약은 P1-PROPERTY-SNAPSHOT-01을 따른다.
 
 ```js
 const propertySchema = {
@@ -76,18 +76,20 @@ const propertySchema = {
 ## 3. Diff — accepted
 
 ```ts
-// src/vdom/diff.ts
+// Diff 계약. 외부 진입점 src/vdom/diff/index.ts는 diff만 내보낸다.
+// AttributeUpdate는 diff/types.ts, orderChanges는 diff/orderChanges.ts의 내부 계약이다.
 
 export interface AttributeUpdate {
-  setAttributes: VNodeAttribute[];
-  removeAttributes: string[];
+  setAttributes?: VNodeAttribute[];
+  removeAttributes?: string[];
 }
 
 export type UpdateData = {
   nodeValue?: string;
   setAttributes?: VNodeAttribute[];
   removeAttributes?: string[];
-  properties?: VNodeProperties;
+  setProperties?: VNodeProperties;
+  removeProperties?: string[];
 };
 
 export type DiffCommand =
@@ -101,19 +103,22 @@ export function diff(prevRoot: VRoot, nextRoot: VRoot): DiffCommand[];
 
 export function orderChanges(changes: DiffCommand[]): DiffCommand[];
 
-export function diffAttributes(prev: VNode, next: VNode): AttributeUpdate | null;
+export function findAttributeUpdates(prev: VNodeAttribute[], next: VNodeAttribute[]): AttributeUpdate;
 
-export function diffProperties(prev: VNode, next: VNode): VNodeProperties | null;
+export function findPropertyUpdates(prev: VNodeProperties, next: VNodeProperties): Pick<UpdateData, 'setProperties' | 'removeProperties'>;
 ```
 
 - `target`은 이전 VDOM 노드, `node`는 다음 VDOM 노드다.
 - `parent`는 다음 VDOM의 `VNode` 또는 `VRoot`다. root-level insert·move는 `VRoot`를 parent로 사용한다.
 - `before`는 다음 VDOM 노드 또는 null이다. `before === null`은 맨 뒤를 뜻한다.
 - `diff()`는 정렬된 명령 배열을 반환하며, 이전 VDOM과 실제 DOM을 수정하지 않는다.
+- 내부 `findAttributeUpdates()`는 작업이 없는 필드를 생략한다. 변경이 없으면 `{}`를 반환해 상위 함수가 불필요한 update 명령을 만들지 않도록 한다. 이름별 조회표로 추가·변경·삭제를 계산하며 검증 범위는 `p1_diff_notes.md` §16을 따른다.
+- `findPropertyUpdates()`는 다음 VDOM에 추가·변경된 값은 `setProperties`, 사라진 이름은 `removeProperties`에 담는다. 값이 없는 작업은 생략하며 실제 DOM 제거 방법은 미확정이다.
+- 다음 VDOM은 비교용 데이터를 보존하고 `dom`만 연결한다. 현재 개인 구현에서는 `diff()`가 루트를, `collectNodeChanges()`가 `linkNode()`로 유지 노드를 연결한다. `findChildMatches()`의 대응을 재사용하며 전체 트리를 재매칭하지 않는다. 구현·명세 기반 검증 범위는 `p1_diff_notes.md` §14를 따른다.
 - Diff 종료 시 `VRoot`와 유지·이동·수정 노드의 `dom`은 실제 DOM에 연결되고, insert/replace 노드의 `dom`은 null로 남는다.
 - 노드 대응은 keyed 요소는 같은 `key`, keyless 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 계산한다.
 - `replace`는 제자리 교체만 담당하고, 위치 이동은 `move`가 담당한다.
-- `orderChanges()`는 부모·기준 형제가 먼저 존재하도록 명령 순서를 정한다.
+- `orderChanges()`는 부모·기준 형제가 먼저 존재하도록 명령 순서를 정한다. 같은 이전 대상을 가리키는 move와 replace는 move를 먼저 실행한다. 명령의 의미적 유효성(예: `parent`가 remove 대상인지)은 검증하지 않으며, 잘못된 명령을 고치지 않는다. 명령의 유효성은 Diff의 책임이다. 단, 같은 next `VNode`를 만드는 `insert`/`replace`가 중복되거나 같은 prev `VNode`를 여러 번 `replace`하는 구조적 모순은 오류로 처리한다.
 
 ## 4. Diff·Patch 공유 매칭과 연결 — accepted
 
@@ -180,7 +185,9 @@ function updateAttributes(target: VNode, data: UpdateData): void;
 function updateProperties(target: VNode, properties: VNodeProperties): void;
 function replaceNode(target: VNode, node: VNode): void;
 function insertNode(node: VNode, parent: VNode | VRoot, before: VNode | null): void;
+function insertNode(node: VNode, parent: VNode | VRoot, before: VNode | null): void;
 function removeNode(target: VNode): void;
+function moveNode(target: VNode, parent: VNode | VRoot, before: VNode | null): void;
 function moveNode(target: VNode, parent: VNode | VRoot, before: VNode | null): void;
 ```
 

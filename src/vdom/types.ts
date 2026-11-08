@@ -9,7 +9,8 @@ export type VNodeType = 1 | 3;
 
 /**
  * 스냅샷·Diff의 요소/텍스트 노드.
- * dom은 Snapshot·Diff 종료까지 null이며 Patch 성공 시 실제 DOM에 연결된다.
+ * dom은 Snapshot 종료 시 null이다. Diff가 유지 노드를 연결하고,
+ * Patch가 삽입·교체 노드와 그 하위 트리를 생성·연결한다.
  */
 export interface VNode {
   nodeType: VNodeType;
