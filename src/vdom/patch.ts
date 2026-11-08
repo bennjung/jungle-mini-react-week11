@@ -119,8 +119,12 @@ function updateNode(target: VNode, data: UpdateData): void {
 
   updateAttributes(target, data);
 
-  if (data.properties) {
-    updateProperties(target, data.properties);
+  if (data.setProperties) {
+    updateProperties(target, data.setProperties);
+  }
+
+  if (data.removeProperties) {
+    removeProperties(target, data.removeProperties);
   }
 }
 
@@ -140,9 +144,19 @@ function updateAttributes(target: VNode, data: UpdateData): void {
   }
 }
 
-// properties 값을 실제 DOM 프로퍼티에 적용한다.
+// 설정할 properties 값을 실제 DOM 프로퍼티에 적용한다.
 function updateProperties(target: VNode, properties: VNodeProperties): void {
   applyProperties(requireElementDom(target, 'update target'), properties);
+}
+
+// 제거할 properties 이름을 실제 DOM 프로퍼티에서 삭제한다.
+// 표준 DOM 프로퍼티의 기본값 복원은 diff가 setProperties로 표현한다.
+function removeProperties(target: VNode, names: string[]): void {
+  const element = requireElementDom(target, 'update target');
+
+  for (const name of names) {
+    Reflect.deleteProperty(element, name);
+  }
 }
 
 // target의 실제 DOM을 새 VNode의 DOM으로 제자리 교체한다.

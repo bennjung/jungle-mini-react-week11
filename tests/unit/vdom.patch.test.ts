@@ -93,7 +93,7 @@ describe('PATCH-02 update attributes and properties', () => {
             { name: 'data-extra', value: 'x' }
           ],
           removeAttributes: ['title'],
-          properties: { value: '', checked: false, indeterminate: false }
+          setProperties: { value: '', checked: false, indeterminate: false }
         }
       }
     ];
@@ -107,6 +107,38 @@ describe('PATCH-02 update attributes and properties', () => {
     expect(input.value).toBe('');
     expect(input.checked).toBe(false);
     expect(input.indeterminate).toBe(false);
+  });
+
+  it('removeProperties로 직접 추가한 프로퍼티를 제거한다', () => {
+    const prevInput = element('input', {
+      key: 'i1',
+      properties: { value: 'A', customFlag: 'x' }
+    });
+    const prev = root([prevInput]);
+    setup(prev);
+    const input = prevInput.dom as HTMLInputElement & { customFlag?: string };
+    expect(input.customFlag).toBe('x');
+
+    const nextInput = element('input', {
+      key: 'i1',
+      properties: { value: 'B' }
+    });
+    const next = root([nextInput]);
+
+    applyAfterDiff(prev, next, [
+      {
+        type: 'update',
+        target: prevInput,
+        data: {
+          setProperties: { value: 'B' },
+          removeProperties: ['customFlag']
+        }
+      }
+    ]);
+
+    expect(nextInput.dom).toBe(input);
+    expect(input.value).toBe('B');
+    expect(input.customFlag).toBeUndefined();
   });
 });
 
