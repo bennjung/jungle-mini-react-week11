@@ -34,12 +34,13 @@ export type UpdateData = {
   nodeValue?: string;
   setAttributes?: VNodeAttribute[];
   removeAttributes?: string[];
-  properties?: VNodeProperties;
+  setProperties?: VNodeProperties;
+  removeProperties?: string[];
 };
 
 export type DiffCommand =
   | { type: 'replace'; target: VNode; node: VNode }
   | { type: 'update'; target: VNode; data: UpdateData }
-  | { type: 'insert'; node: VNode; parent: VNode; before: VNode | null }
+  | { type: 'insert'; node: VNode; parent: VNode | VRoot; before: VNode | null }
   | { type: 'remove'; target: VNode }
-  | { type: 'move'; target: VNode; parent: VNode; before: VNode | null };
+  | { type: 'move'; target: VNode; parent: VNode | VRoot; before: VNode | null };
