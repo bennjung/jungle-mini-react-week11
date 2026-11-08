@@ -252,10 +252,10 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 - **대상 / 범위:** `orderChanges()` → `applyPatch()`.
 - **사전 상태:** 실제 A(key="a") → B(key="b") → C(key="c"). 목표는 B(key="b") → A'(key="a", div→p) → C(key="c")다. replace·move 명령을 직접 준비한다.
-- **입력·행동:** A를 A'로 교체하고 A'를 C 앞으로 이동하는 명령을 정렬·적용한다.
-- **검증 시점:** `orderChanges()` 반환 후 replace·move 순서 확인, `applyPatch()` 종료 후 자식 순서 확인.
-- **기대 결과:** replace는 A 자리에서 A'로 교체한다. A'를 C 앞으로 이동하는 move가 별도로 실행된다. 최종 순서는 B → A' → C이고 B·C 실제 객체는 유지된다.
-- **유지 조건:** replace만으로 최종 위치를 맞추지 않는다. replace 대상의 위치는 현재 위치 그대로이며, 위치 변경은 move가 담당한다.
+- **입력·행동:** 이전 A를 C 앞으로 이동한 뒤, 이동한 위치에서 A'로 교체하는 명령을 정렬·적용한다.
+- **검증 시점:** `orderChanges()` 반환 후 move가 replace보다 먼저 오는지 확인, `applyPatch()` 종료 후 자식 순서 확인.
+- **기대 결과:** move는 이전 A를 C 앞으로 이동한다. replace는 이동한 위치의 A를 A'로 교체한다. 최종 순서는 B → A' → C이고 B·C 실제 객체는 유지된다.
+- **유지 조건:** move.target은 이전 VNode이므로 이동 후 replace가 같은 위치에서 일어나야 한다. replace만으로 최종 위치를 맞추지 않으며, 위치 변경은 move가 담당한다.
 
 ## 7. Patch — 이전 VDOM 참조로 DOM을 변경하고 새 노드 참조 연결 완성
 

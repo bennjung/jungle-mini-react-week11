@@ -481,7 +481,7 @@ describe('명령 순서 — 문서 §6 중 Diff·정렬 종료 시점', () => {
     expect(change.node).toBe(child(input.next));
   });
 
-  it('ORDER-05: 같은 대상의 replace를 move보다 먼저 실행한다', () => {
+  it('ORDER-05: 같은 대상의 move를 replace보다 먼저 실행한다', () => {
     const input = fixture(
       '<ul><div key="a">A</div><li key="b">B</li><li key="c">C</li></ul>',
       '<ul><li key="b">B</li><p key="a">A</p><li key="c">C</li></ul>'
@@ -491,23 +491,27 @@ describe('명령 순서 — 문서 §6 중 Diff·정렬 종료 시점', () => {
     const nextA = child(nextUL, 1);
     const nextC = child(nextUL, 2);
     const commands: DiffCommand[] = [
-      { type: 'move', target: prevA, parent: nextUL, before: nextC },
-      { type: 'replace', target: prevA, node: nextA }
+      { type: 'replace', target: prevA, node: nextA },
+      { type: 'move', target: prevA, parent: nextUL, before: nextC }
     ];
     const ordered = withoutMutations(input, () => orderChanges(commands));
     expect(ordered).toHaveLength(2);
-    const replacement = ordered[0];
-    const movement = ordered[1];
-    expect(replacement?.type).toBe('replace');
-    expect(movement?.type).toBe('move');
-    if (!replacement || replacement.type !== 'replace' || !movement || movement.type !== 'move') {
-      throw new Error('replace → move 순서가 아니다.');
+
+    const moveIndex = ordered.findIndex((change) => change.type === 'move');
+    const replaceIndex = ordered.findIndex((change) => change.type === 'replace');
+    expect(moveIndex).toBeGreaterThanOrEqual(0);
+    expect(replaceIndex).toBeGreaterThan(moveIndex);
+
+    const movement = ordered[moveIndex];
+    const replacement = ordered[replaceIndex];
+    if (!movement || movement.type !== 'move' || !replacement || replacement.type !== 'replace') {
+      throw new Error('move → replace 관계가 아니다.');
     }
-    expect(replacement.target).toBe(prevA);
-    expect(replacement.node).toBe(nextA);
     expect(movement.target).toBe(prevA);
     expect(movement.parent).toBe(nextUL);
     expect(movement.before).toBe(nextC);
+    expect(replacement.target).toBe(prevA);
+    expect(replacement.node).toBe(nextA);
   });
 });
 
