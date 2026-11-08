@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it } from 'vitest';
-import { linkMatchedDom } from '../../src/vdom/link';
+import { diff } from '../../src/vdom/diff';
 import {
   applyPatch,
   assertAllLinked,
@@ -8,13 +8,13 @@ import {
 import type { DiffCommand, VRoot } from '../../src/vdom/types';
 import { collectNodes, element, root, text } from '../helpers/vdom';
 
-// 실제 흐름에서는 diff가 유지 노드의 dom을 연결한 뒤 applyPatch()를 호출한다.
+// 실제 흐름과 같이 diff가 유지 노드의 dom을 연결한 뒤 applyPatch()를 호출한다.
 function applyAfterDiff(
   prev: VRoot,
   next: VRoot,
   changes: DiffCommand[]
 ): VRoot {
-  linkMatchedDom(prev, next);
+  diff(prev, next);
   return applyPatch(prev, next, changes);
 }
 
@@ -454,43 +454,6 @@ describe('root insertion', () => {
     expect(container.firstElementChild).toBe(section.dom);
     expect(section.dom).not.toBeNull();
     assertAllLinked(next, container);
-  });
-});
-
-describe('linkMatchedDom', () => {
-  it('유지 노드는 연결하고 새 노드는 null로 둔다', () => {
-    const prevText = text('A');
-    const prevP = element('p', { key: 'p1', children: [prevText] });
-    const prevSpan = element('span', { key: 's1', children: [text('유지')] });
-    const prev = root([prevP, prevSpan]);
-    const container = setup(prev);
-
-    const nextP = element('p', { key: 'p1', children: [text('B')] });
-    const nextSpan = element('span', { key: 's1', children: [text('유지')] });
-    const nextEm = element('em', { key: 'e1', children: [text('추가')] });
-    const next = root([nextP, nextSpan, nextEm]);
-
-    linkMatchedDom(prev, next);
-
-    expect(next.dom).toBe(container);
-    expect(nextP.dom).toBe(prevP.dom);
-    expect(nextP.childNodes[0]?.dom).toBe(prevText.dom);
-    expect(nextSpan.dom).toBe(prevSpan.dom);
-    expect(nextEm.dom).toBeNull();
-  });
-
-  it('같은 key라도 태그가 다르면 연결하지 않는다', () => {
-    const prevDiv = element('div', { key: 'n1', children: [text('A')] });
-    const prev = root([prevDiv]);
-    setup(prev);
-
-    const nextP = element('p', { key: 'n1', children: [text('A')] });
-    const next = root([nextP]);
-
-    linkMatchedDom(prev, next);
-
-    expect(nextP.dom).toBeNull();
-    expect(nextP.childNodes[0]?.dom).toBeNull();
   });
 });
 

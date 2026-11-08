@@ -131,6 +131,7 @@
   - `p1_function_flow.md` §5
   - `p1_test_cases.md` §1, SNAP-04, SNAP-05, PATCH-08
 - **미확정:** 같은 부모 안의 중복 key, key 값 변경, 같은 key의 태그 변경 대응은 CONF-03.
+- **후속 구현:** 2026-11-08 `matchChildren()`이 제거되고 `findChildMatches()`가 `key`를 읽는다. key 식별·보존 정책은 그대로 유지한다. 변경 이유와 범위는 P1-MATCH-REMOVE-01을 따른다.
 
 ## P1-UI-01 — main.html 좌우 2분할 화면과 초기 루트
 
@@ -162,7 +163,7 @@
 
 ## P1-PATCH-LINK-02 — diff가 유지 노드의 실제 DOM 참조를 연결
 
-- **상태:** accepted
+- **상태:** accepted — 매칭·연결 유틸리티 부분은 P1-MATCH-REMOVE-01로 대체
 - **날짜:** 2026-11-07
 - **배경:** P1-PATCH-LINK-01 A안은 diff와 Patch가 `matchChildren()`을 각각 실행해 매칭을 두 번 수행했다. 매칭을 한 번만 수행하고 Patch는 새 노드 생성에 집중하도록 역할을 조정한다.
 - **결정:** `diff()`가 매칭된 pair 중 type/tag가 같은 유지·이동·수정 노드와 `VRoot`에 `prev.dom`을 `next.dom`으로 연결한다. insert/replace 노드는 diff가 연결하지 않고 null로 둔다. `applyPatch(prevRoot, nextRoot, changes)`는 유지 노드가 이미 연결되었다고 가정하고, 변경 명령 적용과 insert/replace의 `renderNode()` 연결만 담당한다. `diff()`의 반환 계약은 `DiffCommand[]`를 유지한다.
@@ -182,6 +183,7 @@
 - **대체:** P1-PATCH-LINK-01 A안을 대체한다.
 - **미확정:** diff가 연결을 수행할 때 prev VDOM이 실제 DOM에 연결되어 있어야 한다는 전제의 오류 처리, diff 실패 시 부분 연결된 next VDOM의 폐기 정책.
 - **개인 Diff 코드 반영:** `diff()`에서 루트 연결, `collectNodeChanges()`에서 `linkNode()` 호출과 기존 하위 함수 취합·재귀를 수행한다. `findChildMatches()`의 기존 결과를 사용하며 전체 재매칭은 추가하지 않는다. 사용자의 정정에 따라 임의 추가한 격리 테스트를 제거하고, 공용 명세 DIFF-01–DIFF-09의 관련 연결 검증만 기존 테스트에 반영했다. 미구현 하위 함수는 대체하지 않으며, 전체 테스트는 32개 통과·기존 20개 실패다. 상세 범위·검증 결과는 `p1_diff_notes.md` §14를 따른다.
+- **후속 변경:** `matchChildren()`, `ChildMatchPlan`, `linkMatchedDom()`은 P1-MATCH-REMOVE-01로 제거됐다. Diff는 `findChildMatches()`의 대응을 재사용하고 `collectNodeChanges()`에서 `linkNode()`만 호출한다. `applyPatch()`와 `assertAllLinked()` 계약은 유지한다.
 
 ## P1-PROPERTY-SNAPSHOT-01 — DOM에서 읽은 프로퍼티 상태를 비교한다
 
@@ -192,3 +194,21 @@
 - **유지:** 기존 `removeProperties` 타입과 함수 단위 추가·제거 시험은 삭제하지 않는다. 일반 데이터 레코드에서 이름이 사라진 것을 검출하는 계약과 실제 생성 경로의 도달 가능성을 구분한다.
 - **제외:** 표준 DOM 프로퍼티에 대한 delete나 기본값 리셋을 구현하지 않는다. 새로운 생성 경로가 프로퍼티 이름 생략을 허용하게 되면 실제 적용 정책을 재논의한다.
 - **영향 범위:** PRD, 함수 흐름, 인터페이스, 테스트 명세의 생성·프로퍼티 설명. 실행 코드와 기존 테스트 기대 결과는 변경하지 않는다.
+
+## P1-MATCH-REMOVE-01 — matchChildren·linkMatchedDom 제거와 매칭 경로 단일화
+
+- **상태:** accepted
+- **날짜:** 2026-11-08
+- **배경:** `src/vdom/match.ts`는 `upstream/patch`의 `a8794e1`에서 추가됐다. 이후 `upstream/chan95821-diff`의 실제 Diff는 `findChildMatches()`를 사용해 자식 대응을 계산하고, `collectNodeChanges()`에서 `linkNode()`만 호출한다. `matchChildren()`과 `linkMatchedDom()`은 실제 Diff 경로에서 호출되지 않고 Patch 테스트의 연결 준비에만 사용됐다.
+- **결정:** `src/vdom/match.ts`와 `tests/unit/vdom.match.test.ts`를 삭제한다. `src/vdom/link.ts`에서는 `linkMatchedDom()`, `linkChildren()`, `matchChildren` import를 제거하고 `linkNode()`와 `isLinkablePair()`만 유지한다. Patch 단위 테스트가 Diff의 연결 상태를 준비할 때는 별도 매칭 유틸리티 대신 실제 `diff()`를 사용한다.
+- **이유:** 실제 실행 경로와 테스트 전용 경로의 매칭 구현이 중복돼 있었다. 두 구현은 중복 key 처리도 달라 동일 입력에서 서로 다른 대응을 만들 수 있었다. 사용되지 않는 `matchChildren()`의 insert·remove·move 계산과 `linkMatchedDom()`의 전체 재매칭을 제거해 Diff의 `findChildMatches()` 한 경로로 통일한다.
+- **인터페이스:**
+  - Diff 매칭: `findChildMatches(prevChildren, nextChildren): ChildMatch[]` — `src/vdom/diff/findChildMatches.ts`
+  - 노드 연결: `linkNode(prev, next): boolean`, `isLinkablePair(prev, next): boolean` — `src/vdom/link.ts`
+  - Patch: `applyPatch(prevRoot, nextRoot, changes): VRoot`, `assertAllLinked(root, actualRoot): void` — `src/vdom/patch.ts`
+- **제거:** `matchChildren()`, `ChildMatchPlan`, `MatchedPair`, `linkMatchedDom()`, `linkChildren()`.
+- **유지:** key 식별·보존 정책(P1-KEY-01), Diff의 유지 노드 연결, insert/replace를 Patch가 연결하는 `P1-PATCH-LINK-02`의 나머지 계약. 중복 key 규칙은 CONF-03 미확정 상태다.
+- **통합 검증:** `tests/integration/vdom-snapshot-diff-patch.test.ts`에 IT-01–IT-08을 추가했다. 실제 `parseHTML()`, `createSnapshot()`, `diff()`, `applyPatch()`만 연결하고, Snapshot의 참조 미연결, Diff 중 실제 DOM 불변, Diff 후 유지·이동 노드 연결, Patch 후 전체 연결, 연속 Patch의 DOM 객체 재사용을 확인했다. History와 편집기·버튼·handler는 이 결정의 검증 범위가 아니다.
+- **검증 결과:** 2026-11-08 `npm run check`에서 18개 테스트 파일, 148개 통과·2개 skip·7개 todo였다. IT-01–IT-08은 모두 통과했고 `npm run build`도 통과했다. 초안 실행 중 발견한 실패는 테스트가 `ul`의 key를 실제 영역 루트의 key로 읽은 fixture 오류였으며, 구현 기대 결과는 변경하지 않았다.
+- **영향 범위:** `src/vdom/link.ts`, 삭제된 `src/vdom/match.ts`, `tests/unit/vdom.patch.test.ts`, 삭제된 `tests/unit/vdom.match.test.ts`, `tests/integration/vdom-snapshot-diff-patch.test.ts`, `p1_interfaces.md` §4·§7, `p1_prd.md` §4·§8, `p1_function_flow.md` §4·§8, `p1_test_cases.md` §5–§8·§12, `p1_test_boards.md`.
+- **검증 한계:** History·`handlePatch()`·`handleHistoryMove()`·브라우저 기능 흐름은 아직 구현되지 않아 검증하지 않았다. `main.ts`의 실제 의존성 조립도 이 결정의 범위가 아니다.

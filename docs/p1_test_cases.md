@@ -147,7 +147,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ### DIFF-03 — 속성 추가·변경·삭제를 update로 계산하고 속성 나열 순서는 무시한다
 
-- **대상 / 범위:** `diffAttributes()`를 포함한 `diff()`.
+- **대상 / 범위:** `findAttributeUpdates()`를 포함한 `diff()`.
 - **사전 상태:** 이전 `<p key="p1" class="a" title="설명">A</p>`, 다음 `<p key="p1" class="b" data-extra="x">A</p>`.
 - **입력·행동:** 대응하는 p의 속성을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
@@ -156,7 +156,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ### DIFF-04 — 태그·노드 종류 변경은 하위 중복 명령 없이 replace로 계산한다
 
-- **대상 / 범위:** `compareNode()`를 포함한 `diff()`.
+- **대상 / 범위:** `collectNodeChanges()`를 포함한 `diff()`.
 - **사전 상태:** 같은 key를 가진 `<div key="n1">A</div>` → `<p key="n1">A</p>`를 준비한다. 같은 key의 태그 변경 대응은 CONF-03 확정 후 실행한다.
 - **입력·행동:** 두 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
@@ -165,7 +165,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ### DIFF-05 — 입력·선택 프로퍼티의 변경을 false·빈 문자열까지 update에 담는다
 
-- **대상 / 범위:** `diffProperties()`를 포함한 `diff()`.
+- **대상 / 범위:** `findPropertyUpdates()`를 포함한 `diff()`.
 - **사전 상태:** key가 같은 입력 요소의 이전·다음 properties를 준비한다. value A → B, checked true → false, OPTION selected false → true를 각각 검증한다.
 - **입력·행동:** 두 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
@@ -183,7 +183,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ### DIFF-06 — 중첩된 텍스트 하나만 바뀌면 부모·형제 변경 명령을 만들지 않는다
 
-- **대상 / 범위:** `diffChildren()` 재귀를 포함한 `diff()`.
+- **대상 / 범위:** `collectChildChanges()` 재귀를 포함한 `diff()`.
 - **사전 상태:** 이전 `<div key="d1"><section key="s1"><p key="p1">A</p><span key="sp1">유지</span></section></div>`, 다음은 같은 key를 유지한 채 p의 텍스트만 B다.
 - **입력·행동:** 전체 VDOM을 비교한다.
 - **검증 시점:** `diff()` 반환 직후.
@@ -256,7 +256,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 - DIFF-07의 A B → B A는 B를 다음 A 앞으로 옮기는 명령 하나를 정확히 요구한다. 그 외 사례에는 특정한 명령 배열이나 최소 횟수를 추가로 강제하지 않는다.
 - MOVE-02·06의 표준 DOM 적용은 이동 명령의 효과를 확인하는 테스트 도구이며 제품 `applyPatch()`를 대신 구현하거나 완료로 간주하지 않는다. 아직 정렬 함수가 미구현이므로 이동 계획만 구현해도 최종 순서 검증은 완료되지 않는다.
 
-기존 실제 DOM을 찾는 데 필요한 참조는 이전 VDOM에 준비한다. 다음 VDOM은 Diff 시작 시 `dom`이 null이며, Diff가 유지·이동·수정 노드를 연결하고 Patch가 insert/replace 노드를 연결한다. ORDER 테스트에서 `applyPatch()`를 직접 호출할 때는 `linkMatchedDom()`으로 Diff의 연결 상태를 준비한다. key가 있는 요소는 같은 key로, key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다. 특정한 유일 순서나 최소 명령 개수보다는 참조 유효성과 최종 결과를 확인한다.
+기존 실제 DOM을 찾는 데 필요한 참조는 이전 VDOM에 준비한다. 다음 VDOM은 Diff 시작 시 `dom`이 null이며, Diff가 유지·이동·수정 노드를 연결하고 Patch가 insert/replace 노드를 연결한다. ORDER 테스트에서 `applyPatch()`를 직접 호출할 때는 실제 `diff()`로 Diff의 연결 상태를 준비한다. key가 있는 요소는 같은 key로, key가 없는 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 대응한다. 특정한 유일 순서나 최소 명령 개수보다는 참조 유효성과 최종 결과를 확인한다.
 
 ### ORDER-01 — 새 기준 형제를 먼저 생성한 뒤 그 앞에 삽입해 목표 순서를 만든다
 
@@ -305,7 +305,7 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ## 7. Patch — 이전 VDOM 참조로 DOM을 변경하고 새 노드 참조 연결 완성
 
-이 절의 PATCH-01–PATCH-05는 `linkMatchedDom()`으로 Diff의 유지 노드 연결 상태를 준비한 뒤 `applyPatch()`에 명령을 직접 전달한다. Diff의 식별 규칙과 실제 DOM 연산의 정확성을 분리해 검증한다.
+이 절의 PATCH-01–PATCH-05는 실제 `diff()`로 Diff의 유지 노드 연결 상태를 준비한 뒤 `applyPatch()`에 명령을 직접 전달한다. Diff의 식별 규칙과 실제 DOM 연산의 정확성을 분리해 검증한다.
 
 ### PATCH-01 — 텍스트 update는 기존 요소·텍스트 객체를 유지하며 값만 바꾼다
 
@@ -363,8 +363,8 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ### PATCH-07 — 삽입·삭제·이동·수정·교체를 함께 적용해 목표 트리와 참조를 완성한다
 
-- **대상 / 범위:** `orderChanges()` → `linkMatchedDom()` → `applyPatch()`.
-- **사전 상태:** 기존 A(key="a") → B(key="b") → C(key="c") → D(key="d") 형제의 참조를 준비하고, 새 X(key="x")와 교체할 D'를 포함한 명령을 직접 준비한다. `applyPatch()` 전에 `linkMatchedDom()`으로 유지 노드의 Diff 연결 상태를 준비한다.
+- **대상 / 범위:** `diff()` → `applyPatch()`.
+- **사전 상태:** 기존 A(key="a") → B(key="b") → C(key="c") → D(key="d") 형제의 참조를 준비하고, 새 X(key="x")와 교체할 D'를 포함한 명령을 직접 준비한다. `applyPatch()` 전에 실제 `diff()`로 유지 노드의 연결 상태를 준비한다.
 - **입력·행동:** B 제거, 새 X 삽입, C를 A 앞으로 이동, A 텍스트 변경, D 태그 교체를 포함해 목표 C → X → 수정된 A → 교체된 D를 만든다.
 - **검증 시점:** 정렬된 명령 전체에 대한 `applyPatch()` 종료 직후.
 - **기대 결과:** 구조·순서·텍스트·속성·properties가 목표 VDOM과 일치한다. 다음 VDOM의 유지·이동·수정·새 노드·교체 노드 모두 실제 DOM 참조가 연결된다.
@@ -372,11 +372,11 @@ VDOM 비교는 구조·텍스트·속성·properties를 비교하며, 현재 실
 
 ### PATCH-08 — Diff가 연결한 유지 노드를 사용하고 새 노드까지 전체 참조를 완성한다
 
-- **대상 / 범위:** `linkMatchedDom()` → `applyPatch()`.
+- **대상 / 범위:** `diff()` → `applyPatch()`.
 - **사전 상태:** 이전 `<div key="d1"><p key="p1">A</p><span key="sp1">유지</span></div>`의 VDOM은 실제 DOM 참조를 가진다. 다음 `<div key="d1"><p key="p1">B</p><span key="sp1">유지</span><em key="e1">추가</em></div>`의 VDOM은 `VRoot`와 모든 하위 노드의 `dom`이 null이다. 기존 div·p·span·각 텍스트 노드 참조를 보관한다.
-- **입력·행동:** `linkMatchedDom()`으로 Diff의 유지 노드 연결을 수행한 뒤, 텍스트 update와 em insert 명령을 `applyPatch()`에 적용한다.
-- **검증 시점:** `linkMatchedDom()` 종료 직후와 Patch 종료 직후, 이력 저장 전.
-- **기대 결과:** `linkMatchedDom()` 후 다음 VDOM의 div·p·span·각 기존 텍스트와 `VRoot`는 유지된 실제 객체에 연결되고, 새 em과 텍스트는 null이다. `applyPatch()` 후 새 em과 텍스트가 생성한 실제 객체에 연결되어 실제 화면이 목표와 일치하고, 전체 VDOM에 미연결 노드가 없다.
+- **입력·행동:** 실제 `diff()`로 Diff의 유지 노드 연결을 수행한 뒤, 텍스트 update와 em insert 명령을 `applyPatch()`에 적용한다.
+- **검증 시점:** `diff()` 종료 직후와 Patch 종료 직후, 이력 저장 전.
+- **기대 결과:** `diff()` 후 다음 VDOM의 div·p·span·각 기존 텍스트와 `VRoot`는 유지된 실제 객체에 연결되고, 새 em과 텍스트는 null이다. `applyPatch()` 후 새 em과 텍스트가 생성한 실제 객체에 연결되어 실제 화면이 목표와 일치하고, 전체 VDOM에 미연결 노드가 없다.
 - **유지 조건:** 변경 명령이 없는 span·텍스트도 Diff 연결 대상이다. 참조를 채우려고 기존 DOM을 재생성하지 않으며, 다음 VDOM의 실제 DOM 참조는 임시 파싱 노드를 가리키지 않는다. `diff()`는 유지 노드를, `applyPatch(prevRoot, nextRoot, changes)`는 새 노드를 연결하며 P1-PATCH-LINK-02를 따른다.
 
 ## 8. 전체 Patch — 단계별 결과·연속 수정·변경 없음·실패 복구 검증
@@ -518,3 +518,102 @@ key가 없는 요소와 텍스트 노드의 순서 대응은 확정했다. 같�
 | H01·H02 | INIT-01·INIT-02, FLOW-01 |
 | H03·H04 | HIST-02·HIST-03 |
 | H05·H06 | HIST-04·HIST-01 |
+
+## 12. 통합 테스트 — Snapshot → Diff → Patch 실제 연결
+
+이 절은 모듈별 함수를 mock으로 분리하지 않고 실제 `parseHTML()`, `createSnapshot()`, `diff()`, `applyPatch()`를 연결해 검증한다. 실행 위치는 `tests/integration/vdom-snapshot-diff-patch.test.ts`다.
+
+공통 원칙:
+
+- 테스트가 `DiffCommand`를 직접 만들지 않고 실제 `diff()` 결과를 사용한다.
+- Snapshot 직후 다음 VDOM의 `VRoot`와 모든 `VNode`의 `dom`은 null이다.
+- Diff 직후 실제 DOM은 변경되지 않는다.
+- Diff는 유지·이동·수정 노드를 연결하고 insert/replace 노드는 null로 둔다.
+- Patch 후 실제 DOM 구조와 전체 `dom` 연결이 완성된다.
+- 유지·이동 노드는 이전과 같은 실제 DOM 객체를 사용한다.
+- History·편집기·버튼·`handlePatch()`는 이 절의 범위가 아니다. 해당 흐름은 FLOW·HIST에서 검증한다.
+
+### IT-01 — 빈 실제 영역에 Snapshot → Diff → Patch로 초기 렌더링한다
+
+- **기존 명세 연결:** INIT-01의 렌더링 부분, ORDER-02, PATCH-08.
+- **사전 상태:** 실제 영역은 비어 있고 `createEmptyVDOM()`의 `dom`만 연결되어 있다.
+- **입력·행동:** `<section key="s"><p key="p">A</p><span key="sp">B</span></section>`을 Snapshot으로 만들고 Diff → Patch를 실행한다.
+- **검증 시점:** Snapshot 직후, Diff 직후, Patch 종료 직후.
+- **기대 결과:** Snapshot의 모든 `dom`은 null이다. Diff 직후 실제 영역은 비어 있고 새 하위 트리를 중복 계획하지 않는다. Patch 후 section → p → span 구조와 텍스트가 목표와 일치하고 모든 VNode의 `dom`이 실제 DOM에 연결된다.
+- **유지 조건:** 실제 영역 컨테이너 객체를 유지하고 샘플을 중복 삽입하지 않는다.
+
+### IT-02 — 텍스트·속성·프로퍼티 변경을 같은 실제 DOM에 반영한다
+
+- **기존 명세 연결:** FLOW-01의 History 제외 부분, DIFF-02·DIFF-03·DIFF-05, PATCH-01·PATCH-02.
+- **사전 상태:** `<article key="root" class="a" title="설명"><h1 key="title">A</h1><input key="field" value="A"></article>`가 실제 DOM에 렌더링되어 있다.
+- **입력·행동:** 다음 HTML에서 h1 텍스트를 B로, article class를 b로, `data-extra="x"`를 추가하고 title을 제거하며 input value를 B로 바꾼다. Snapshot → Diff → Patch를 실행한다.
+- **검증 시점:** Diff 직후와 Patch 종료 직후.
+- **기대 결과:** Diff 직후 화면은 A와 기존 속성을 유지한다. article·h1·텍스트의 `dom`은 기존 실제 DOM과 같다. Patch 후 같은 article·h1·텍스트 객체에 최종 텍스트·속성·프로퍼티가 반영되고 insert/replace 명령은 없다.
+- **유지 조건:** 실제 DOM에 연결된 유지 노드를 재생성하지 않고 전체 VDOM 참조를 완성한다.
+
+### IT-03 — 삽입·삭제·이동·수정을 실제 Diff 명령으로 함께 적용한다
+
+- **기존 명세 연결:** PATCH-07, DIFF-07, ORDER-03, MOVE-04, MOVE-07의 복합 경로.
+- **사전 상태:** `<ul key="list"><li key="a">A</li><li key="b">B</li><li key="c">C</li></ul>`가 렌더링되어 있다.
+- **입력·행동:** 다음 HTML을 `<ul key="list"><li key="c" class="moved">C</li><li key="a">A2</li><li key="x">X</li></ul>`로 수정하고 Snapshot → Diff → Patch를 실행한다.
+- **검증 시점:** Diff 직후와 Patch 종료 직후.
+- **기대 결과:** Diff 직후 실제 DOM은 A → B → C를 유지한다. c·a의 `dom`은 기존 객체와 같고 x의 `dom`은 null이다. Patch 후 최종 순서는 c → a → x이고 c에 class가 적용되며 a의 텍스트는 A2가 된다. b는 실제 DOM에서 분리되고 x와 하위 텍스트가 연결된다.
+- **유지 조건:** 이동한 c·수정한 a는 기존 객체를 유지하고 전체 VDOM 참조를 완성한다.
+
+### IT-04 — 새 형제 삽입 의존성을 지켜 기존 형제 앞에 생성한다
+
+- **기존 명세 연결:** ORDER-01, ORDER-02.
+- **사전 상태:** `<ul key="list"><li key="c">C</li></ul>`만 렌더링되어 있다.
+- **입력·행동:** 목표를 `<ul key="list"><li key="a">A</li><li key="b">B</li><li key="c">C</li></ul>`로 두고 Snapshot → Diff → Patch를 실행한다.
+- **검증 시점:** Diff 직후와 Patch 종료 직후.
+- **기대 결과:** Diff 직후 실제 DOM은 C만 유지한다. Patch 후 최종 순서는 A → B → C이고 새 노드가 부모 없이 삽입되지 않으며 c의 실제 DOM 객체는 유지된다.
+- **유지 조건:** 중복 li를 생성하지 않고 Diff가 반환한 순서를 그대로 사용해 Patch가 성공한다.
+
+### IT-05 — keyless 노드의 replace와 새 하위 트리 연결을 검증한다
+
+- **기존 명세 연결:** DIFF-04의 CONF-03 비의존 사례, PATCH-04.
+- **사전 상태:** `<div key="d"><div>A</div><span>유지</span></div>`가 렌더링되어 있다.
+- **입력·행동:** 첫 번째 keyless 자식을 `<p>B</p>`로 바꾸고 Snapshot → Diff → Patch를 실행한다.
+- **검증 시점:** Diff 직후와 Patch 종료 직후.
+- **기대 결과:** Diff는 같은 위치의 div → p를 replace로 계산하고 새 p의 `dom`은 null로 둔다. 실제 DOM은 Diff 직후 유지된다. Patch 후 같은 위치에 p가 생성되고 새 p와 텍스트가 연결되며 span 객체와 위치는 유지된다.
+- **유지 조건:** 같은 key의 태그 변경 CONF-03은 사용하지 않는다. 이전 div는 실제 DOM에서 분리되고 전체 VDOM 참조를 완성한다.
+
+### IT-06 — 첫 Patch에서 삽입한 노드를 다음 Patch에서 재사용한다
+
+- **기존 명세 연결:** FLOW-02의 삽입 케이스, History 횟수 제외.
+- **사전 상태:** `<div key="d"></div>`가 렌더링되어 있다.
+- **입력·행동:** 첫 번째 Patch에서 `<div key="d"><p key="p1">A</p></div>`로 만들고, 이어 `<p key="p1">B</p>`로 텍스트를 수정한다. 두 번 모두 Snapshot → Diff → Patch를 실행한다.
+- **검증 시점:** 첫 Patch 종료 후 참조를 보관하고 두 번째 Patch 종료 후 확인한다.
+- **기대 결과:** 첫 Patch가 만든 p·텍스트에 실제 DOM 참조가 연결된다. 두 번째 Patch는 같은 p·텍스트 객체를 수정하고 p를 다시 생성하지 않는다. 최종 DOM에 p가 하나만 존재한다.
+- **유지 조건:** 두 번째 Patch 후 전체 VDOM 참조를 완성한다. History 저장 횟수는 이 케이스의 범위가 아니다.
+
+### IT-07 — 첫 Patch에서 교체한 노드를 다음 Patch에서 재사용한다
+
+- **기존 명세 연결:** FLOW-02의 교체 케이스, DIFF-04, PATCH-04.
+- **사전 상태:** `<div><span>A</span></div>`가 렌더링되어 있다.
+- **입력·행동:** 첫 번째 Patch에서 `<div><p>A</p></div>`로 교체한 뒤, 두 번째 Patch에서 텍스트를 B로 수정한다. 두 번 모두 Snapshot → Diff → Patch를 실행한다.
+- **검증 시점:** 첫 Patch 종료 후 p·텍스트 참조를 보관하고 두 번째 Patch 종료 후 확인한다.
+- **기대 결과:** 첫 Patch에서 교체된 p·텍스트에 참조가 연결된다. 두 번째 Patch는 같은 p·텍스트 객체를 수정하며 교체 노드를 다시 생성하지 않는다.
+- **유지 조건:** 최종 실제 DOM과 VDOM 참조가 목표와 일치한다. History 저장 횟수는 이 케이스의 범위가 아니다.
+
+### IT-08 — 변경 없음에서는 빈 명령을 반환하고 Patch를 생략한다
+
+- **기존 명세 연결:** DIFF-01, FLOW-03의 handler 제외 부분.
+- **사전 상태:** `<section key="s"><p key="p">A</p></section>`가 Snapshot과 실제 DOM에 일치하게 렌더링되어 있다.
+- **입력·행동:** 같은 HTML로 새 Snapshot을 만들고 `diff()`까지만 실행한다.
+- **검증 시점:** Diff 직후와 Patch 생략 판단 직후.
+- **기대 결과:** Diff는 빈 배열을 반환하고 실제 DOM 구조·텍스트·객체 동일성은 유지된다. 다음 VDOM의 유지 노드는 기존 DOM에 연결되지만 현재 상태로 교체하지 않는다.
+- **유지 조건:** `applyPatch()`를 실행하지 않고 실제 DOM과 현재 VDOM 객체를 유지한다.
+
+### IT 추적표
+
+| 통합 테스트 | 기존 명세 연결 | 남은 전체 검증 |
+| --- | --- | --- |
+| IT-01 | INIT-01 렌더링, ORDER-02, PATCH-08 | History·편집기 저장 |
+| IT-02 | FLOW-01, DIFF-02·03·05, PATCH-01·02 | History 저장 단계 |
+| IT-03 | PATCH-07, DIFF-07, ORDER-03, MOVE-04 | MOVE-07의 개별 fixture |
+| IT-04 | ORDER-01·02 | 없음 |
+| IT-05 | DIFF-04 일부, PATCH-04 | CONF-03 |
+| IT-06 | FLOW-02 삽입 | History 저장 횟수 |
+| IT-07 | FLOW-02 교체 | History 저장 횟수 |
+| IT-08 | DIFF-01, FLOW-03 | 실제 handler의 Patch 생략 |

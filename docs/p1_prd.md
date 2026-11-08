@@ -120,18 +120,18 @@ applyPatch 실행 중 예외가 발생하면 applyPatch 자체는 롤백하지 �
 ```text
 diff(prevRoot, nextRoot)
 ├─ nextRoot.dom = prevRoot.dom        VRoot 참조 연결
-├─ compareNode(prev, next)
-│  ├─ 노드 종류·태그 변경 → replace (제자리 교체, 이동은 move, DOM 연결 안 함)
-│  ├─ 같은 type/tag → linkNode()       prev.dom을 next.dom에 연결
-│  ├─ 텍스트 변경 → update
-│  ├─ diffAttributes() → update의 속성 데이터
-│  ├─ findPropertyUpdates() → update의 setProperties·removeProperties 데이터
-│  └─ diffChildren()
-│     ├─ matchChildren()               key attribute 우선, key 없는 노드는 부모 안 순서로 대응
-│     ├─ 새 노드 → insert
-│     ├─ 사라진 노드 → remove
-│     ├─ 식별된 기존 형제 순서 변경 → move
-│     └─ 대응하는 자식 → compareNode() 재귀
+├─ collectChildChanges(prev, next)
+│  ├─ findChildMatches()               key attribute 우선, key 없는 노드는 부모 안 순서로 대응
+│  ├─ 새 노드 → insert
+│  ├─ 사라진 노드 → remove
+│  ├─ 대응하는 자식 → collectNodeChanges()
+│  │  ├─ 노드 종류·태그 변경 → replace (제자리 교체, 이동은 move, DOM 연결 안 함)
+│  │  ├─ 같은 type/tag → linkNode()    prev.dom을 next.dom에 연결
+│  │  ├─ 텍스트 변경 → update
+│  │  ├─ findAttributeUpdates() → update의 속성 데이터
+│  │  ├─ findPropertyUpdates() → update의 setProperties·removeProperties 데이터
+│  │  └─ collectChildChanges() 재귀
+│  └─ collectMoveChanges()             식별된 기존 형제 순서 변경 → move
 └─ orderChanges() → 적용 순서가 보장된 명령 배열
 ```
 
@@ -241,6 +241,7 @@ applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `
 | 실제 DOM 연산·새 노드 참조 연결 | PATCH-01–PATCH-08 |
 | 단계별·연속 Patch·변경 없음·실패 복구 | FLOW-01–FLOW-05 |
 | History 저장·복원·복원 후 Patch | HIST-01–HIST-06 |
+| Snapshot → Diff → Patch 실제 연결 | IT-01–IT-08 |
 | 중복 key·key 변경·태그 변경 규칙 | CONF-03 |
 
 ## 9. Data Structures

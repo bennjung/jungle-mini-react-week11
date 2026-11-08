@@ -120,24 +120,26 @@ export function findPropertyUpdates(prev: VNodeProperties, next: VNodeProperties
 - `replace`는 제자리 교체만 담당하고, 위치 이동은 `move`가 담당한다.
 - `orderChanges()`는 부모·기준 형제가 먼저 존재하도록 명령 순서를 정한다. 같은 이전 대상을 가리키는 move와 replace는 move를 먼저 실행한다. 명령의 의미적 유효성(예: `parent`가 remove 대상인지)은 검증하지 않으며, 잘못된 명령을 고치지 않는다. 명령의 유효성은 Diff의 책임이다. 단, 같은 next `VNode`를 만드는 `insert`/`replace`가 중복되거나 같은 prev `VNode`를 여러 번 `replace`하는 구조적 모순은 오류로 처리한다.
 
-## 4. Diff·Patch 공유 매칭과 연결 — accepted
+## 4. Diff 자식 매칭과 DOM 연결 — accepted
 
-`P1-PATCH-LINK-02`로 확정했다. 매칭은 `src/vdom/match.ts`, 연결은 `src/vdom/link.ts`에 둔다.
+`P1-PATCH-LINK-02`의 연결 계약을 유지하고, 공용 매칭 구현은 `P1-MATCH-REMOVE-01`에 따라 `findChildMatches()` 한 경로로 통일한다. 매칭은 `src/vdom/diff/findChildMatches.ts`, 연결은 `src/vdom/link.ts`에 둔다.
 
 ```ts
-// src/vdom/match.ts
+// src/vdom/diff/types.ts
 
-export interface ChildMatchPlan {
-  pairs: Array<{ prev: VNode; next: VNode }>;          // next 순서
-  inserts: Array<{ next: VNode; before: VNode | null }>;
-  removals: VNode[];                                   // prev 순서
-  moves: Array<{ prev: VNode; next: VNode; before: VNode | null }>;
-}
+export type Parent = VRoot | VNode;
 
-export function matchChildren(
+export type ChildMatch =
+  | { kind: 'matched'; prev: VNode; next: VNode }
+  | { kind: 'inserted'; next: VNode }
+  | { kind: 'removed'; prev: VNode };
+
+// src/vdom/diff/findChildMatches.ts
+
+export function findChildMatches(
   prevChildren: VNode[],
   nextChildren: VNode[]
-): ChildMatchPlan;
+): ChildMatch[];
 ```
 
 ```ts
@@ -145,17 +147,14 @@ export function matchChildren(
 
 export function linkNode(prev: VNode, next: VNode): boolean;
 
-export function linkMatchedDom(prev: VRoot, next: VRoot): void;
-
 export function isLinkablePair(prev: VNode, next: VNode): boolean;
 ```
 
-- Diff는 이 계획으로 `insert`·`remove`·`move`·재귀 대상을 만들고, 같은 type/tag의 pair에 `linkNode()`를 적용해 `prev.dom`을 `next.dom`에 연결한다.
-- Patch는 `matchChildren()`을 실행하지 않는다. 유지·이동 노드는 Diff가 연결한 참조를 사용한다.
-- `pairs`는 replace 대상도 포함할 수 있다. Diff의 연결 단계에서는 type/tag가 다른 쌍을 건너뛴다.
-- `inserts`의 노드는 대응하는 이전 노드가 없으므로 `dom`을 연결하지 않는다. Patch의 `renderNode()`가 새 DOM을 연결한다.
-- `linkMatchedDom()`은 전체 트리를 한 번에 연결하는 유틸리티다. Diff 구현은 매칭을 한 번만 수행하기 위해 `linkNode()`를 매칭 계획의 pair마다 호출한다.
-- 중복 key는 현재 등장 순서대로 대응하는 잠정 동작이며, CONF-03 확정 시 함께 조정한다.
+- Diff는 `findChildMatches()` 결과를 `collectNodeChanges()`와 `collectMoveChanges()`에서 재사용한다. 전체 트리를 다시 매칭하지 않는다.
+- 같은 type/tag의 `matched` pair에는 `linkNode()`를 적용해 `prev.dom`을 `next.dom`에 연결한다. type/tag가 다른 pair는 replace 대상이므로 연결하지 않는다.
+- `inserted` 노드는 대응하는 이전 노드가 없으므로 Diff가 연결하지 않는다. Patch의 `renderNode()`가 새 DOM을 연결한다.
+- Patch는 매칭을 실행하지 않는다. 유지·이동 노드는 Diff가 연결한 참조를 사용한다.
+- `findChildMatches()`는 중복 key를 key 대응에서 제외하고 keyless 순서 대응 목록에 넣는다. 이는 CONF-03 확정 전의 현재 구현이며 최종 제품 규칙으로 확정된 내용이 아니다.
 
 ## 5. Patch — accepted
 
@@ -185,9 +184,7 @@ function updateAttributes(target: VNode, data: UpdateData): void;
 function updateProperties(target: VNode, properties: VNodeProperties): void;
 function replaceNode(target: VNode, node: VNode): void;
 function insertNode(node: VNode, parent: VNode | VRoot, before: VNode | null): void;
-function insertNode(node: VNode, parent: VNode | VRoot, before: VNode | null): void;
 function removeNode(target: VNode): void;
-function moveNode(target: VNode, parent: VNode | VRoot, before: VNode | null): void;
 function moveNode(target: VNode, parent: VNode | VRoot, before: VNode | null): void;
 ```
 
@@ -202,7 +199,7 @@ function moveNode(target: VNode, parent: VNode | VRoot, before: VNode | null): v
 
 `diff()`는 `DiffCommand[]`를 반환하며, 매칭 결과를 별도 반환값으로 넘기지 않는다. 매칭과 유지 노드 연결은 `diff()` 내부에서 한 번 수행한다.
 
-## 6. App·통합 — accepted (I/O 제안)
+## 6. App·통합 — accepted (I/O 일부 제안)
 
 ```ts
 // src/app/init.ts
@@ -217,14 +214,16 @@ export interface AppElements {
 
 export function getElements(): AppElements;
 
-export function init(): { elements: AppElements; root: VRoot };
+export function init(dependencies?: InitDependencies): { elements: AppElements; root: VRoot };
 ```
 
-```ts
-// src/app/editor.ts (제안)
+`InitDependencies`, `createInitializer()`, `InitializationHistory`의 경계는 P1-INIT-TDD-01을 따른다. 실제 호출에는 `parseHTML`, `createSnapshot`, `diff`, `applyPatch`, `createHistory`, `getSampleHTML`, `createHandlers` 구현이 필요하다.
 
-export function readEditorHTML(editor: HTMLTextAreaElement): string;
-export function writeEditorHTML(editor: HTMLTextAreaElement, html: string): void;
+```ts
+// src/app/editor.ts
+
+export function readEditorHTML(editor: HTMLTextAreaElement): string;  // 구현
+export function writeEditorHTML(editor: HTMLTextAreaElement, html: string): void;  // 제안
 ```
 
 `handlePatch()` 연결:
@@ -241,7 +240,7 @@ const completed = applyPatch(prev, next, changes); // insert/replace 새 DOM 연
 history.set(completed, html);
 ```
 
-- `readEditorHTML`/`writeEditorHTML`의 인자 형태는 앱 통합 단계에서 확정한다.
+- `readEditorHTML()`은 현재 구현되어 있고, `writeEditorHTML()`의 구현·최종 인자 형태는 앱 통합 단계에서 확정한다.
 
 ## 7. 상태 요약
 
@@ -250,8 +249,9 @@ history.set(completed, html);
 | `VNode`, `VRoot`, `DiffCommand` | accepted | P1-VDOM-ROOT-01, PRD §9 |
 | VDOM create 함수 | accepted | PRD §5, 함수 흐름 §5 |
 | Diff 함수·명령 | accepted | PRD §4, §9.2 |
-| `matchChildren`, `ChildMatchPlan` | accepted | P1-PATCH-LINK-02 |
-| `linkNode`, `linkMatchedDom`, `isLinkablePair` | accepted | P1-PATCH-LINK-02 |
+| `findChildMatches`, `ChildMatch` | accepted | P1-MATCH-REMOVE-01 |
+| `linkNode`, `isLinkablePair` | accepted | P1-MATCH-REMOVE-01 |
 | Patch 함수·연결 방식 | accepted | P1-PATCH-LINK-02 |
-| `AppElements`, `init` | accepted | P1-UI-01 |
-| `readEditorHTML`, `writeEditorHTML` | 제안 | 앱 통합 단계 |
+| `AppElements`, `init(dependencies?)` | accepted | P1-UI-01, P1-INIT-TDD-01 |
+| `readEditorHTML` | accepted | P1-HTML-01 |
+| `writeEditorHTML` | 제안 | 앱 통합 단계 |

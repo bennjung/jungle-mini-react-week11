@@ -223,24 +223,23 @@ key 없는 자식이 여러 개라면 그 자식들끼리 첫째·둘째 순서�
 
 ## 4. 함수 흐름과 명령 정렬
 
-**[공용 계약]** 아래 내부 함수명은 공용 흐름 문서의 설명이다. 보조 함수의 인자·반환형·분담까지 확정된 것은 아니다. 개인 코드의 현재 함수명과 구조는 §9를 따른다. 아래는 공용 문서의 흐름을 인용한 것이므로 개인 코드의 이름으로 바꾸지 않는다.
+**[공용 계약·2026-11-08 동기화]** 아래 흐름도는 현재 공용 문서와 구현에서 사용하는 함수명이다. 초기 개인 코드 이름과의 대응은 §9에 기록으로 남긴다. 보조 함수의 인자·반환형·분담까지 모두 공용 계약으로 확정된 것은 아니다.
 
 ```text
 diff(prevRoot, nextRoot)
 ├─ nextRoot.dom = prevRoot.dom
-├─ 루트의 자식 대응·비교
-├─ compareNode(prev, next)
-│  ├─ 종류·태그 변경 → replace
-│  ├─ 같은 종류·태그 → linkNode(prev, next), 변경 없는 노드도 연결
-│  ├─ 텍스트 변경 → update
-│  ├─ diffAttributes() → 추가·변경·삭제 데이터
-│  ├─ diffProperties() → 변경된 입력·선택 상태
-│  └─ diffChildren()
-│     ├─ 노드 대응 계산
-│     ├─ 새 노드 → insert
-│     ├─ 사라진 노드 → remove
-│     ├─ 식별된 기존 형제 순서 변경 → move
-│     └─ 대응 자식 → compareNode() 재귀
+├─ collectChildChanges(prev, next)
+│  ├─ findChildMatches() → 자식 대응
+│  ├─ 새 노드 → insert
+│  ├─ 사라진 노드 → remove
+│  ├─ 대응하는 자식 → collectNodeChanges(prev, next)
+│  │  ├─ 종류·태그 변경 → replace
+│  │  ├─ 같은 종류·태그 → linkNode(prev, next), 변경 없는 노드도 연결
+│  │  ├─ 텍스트 변경 → update
+│  │  ├─ findAttributeUpdates() → 추가·변경·삭제 데이터
+│  │  ├─ findPropertyUpdates() → 변경된 입력·선택 상태
+│  │  └─ collectChildChanges() 재귀
+│  └─ collectMoveChanges() → 식별된 기존 형제 순서 변경
 └─ orderChanges() → 적용 가능한 순서의 명령 배열
 ```
 
