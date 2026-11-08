@@ -118,7 +118,7 @@ export function findPropertyUpdates(prev: VNodeProperties, next: VNodeProperties
 - Diff 종료 시 `VRoot`와 유지·이동·수정 노드의 `dom`은 실제 DOM에 연결되고, insert/replace 노드의 `dom`은 null로 남는다.
 - 노드 대응은 keyed 요소는 같은 `key`, keyless 요소와 텍스트 노드는 같은 부모 안의 자식 순서로 계산한다.
 - `replace`는 제자리 교체만 담당하고, 위치 이동은 `move`가 담당한다.
-- `orderChanges()`는 부모·기준 형제가 먼저 존재하도록 명령 순서를 정한다. 명령의 의미적 유효성(예: `parent`가 remove 대상인지)은 검증하지 않으며, 잘못된 명령을 고치지 않는다. 명령의 유효성은 Diff의 책임이다. 단, 같은 next `VNode`를 만드는 `insert`/`replace`가 중복되거나 같은 prev `VNode`를 여러 번 `replace`하는 구조적 모순은 오류로 처리한다.
+- `orderChanges()`는 부모·기준 형제가 먼저 존재하도록 명령 순서를 정한다. 같은 이전 대상을 가리키는 move와 replace는 move를 먼저 실행한다. 명령의 의미적 유효성(예: `parent`가 remove 대상인지)은 검증하지 않으며, 잘못된 명령을 고치지 않는다. 명령의 유효성은 Diff의 책임이다. 단, 같은 next `VNode`를 만드는 `insert`/`replace`가 중복되거나 같은 prev `VNode`를 여러 번 `replace`하는 구조적 모순은 오류로 처리한다.
 
 ## 4. Diff·Patch 공유 매칭과 연결 — accepted
 

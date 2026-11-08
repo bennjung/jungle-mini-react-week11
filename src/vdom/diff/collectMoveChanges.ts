@@ -60,7 +60,8 @@ function createMoveCommands(
     nextParent.childNodes.map((node, index) => [node, nextParent.childNodes[index + 1] ?? null])
   );
 
-  return movedChildren.map((target) => {
+  // 오른쪽 기준 형제의 위치를 먼저 확정하도록 이동 명령을 역순으로 만든다.
+  return [...movedChildren].reverse().map((target) => {
     const next = nextByPrevious.get(target);
     if (!next || !nextSiblings.has(next)) {
       throw new Error('이동 대상의 다음 형제 위치를 찾을 수 없습니다.');
