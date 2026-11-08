@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { collectChildChanges } from '../../src/vdom/diff/collectChildChanges';
-import type { VNode, VRoot } from '../../src/vdom/types';
+import { collectChildChanges } from '../../../src/vdom/diff/collectChildChanges';
+import type { VNode, VRoot } from '../../../src/vdom/types';
 
 function element(key: string, childNodes: VNode[] = []): VNode {
   return {

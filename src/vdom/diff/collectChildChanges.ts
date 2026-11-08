@@ -21,7 +21,7 @@ export function collectChildChanges(
   const matches = findChildMatches(prevParent.childNodes, nextParent.childNodes);
   const changes: DiffCommand[] = [];
 
-  // 삽입 기준은 다음 VDOM의 바로 오른쪽 형제다. 입력 배열과 DOM 참조는 바꾸지 않는다.
+  // 삽입 기준은 다음 VDOM의 바로 오른쪽 형제다. 대응 노드의 연결은 collectNodeChanges가 맡는다.
   const nextSiblings = new Map<VNode, VNode | null>();
   for (const [index, node] of nextParent.childNodes.entries()) {
     nextSiblings.set(node, nextParent.childNodes[index + 1] ?? null);

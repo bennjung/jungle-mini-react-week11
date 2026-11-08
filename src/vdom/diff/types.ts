@@ -10,6 +10,6 @@ export type ChildMatch =
   | { kind: 'removed'; prev: VNode };
 
 export type AttributeUpdate = {
-  setAttributes: VNodeAttribute[];
-  removeAttributes: string[];
+  setAttributes?: VNodeAttribute[];
+  removeAttributes?: string[];
 };

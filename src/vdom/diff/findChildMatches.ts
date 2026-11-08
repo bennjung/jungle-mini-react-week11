@@ -25,7 +25,7 @@ export function findChildMatches(
 
 /** HTML에 명시된 key 속성만 읽는다. 빈 문자열도 key가 있는 경우다. */
 function readKey(node: VNode): string | undefined {
-  if (node.nodeType !== 1) return undefined;
+  if (node.nodeType !== Node.ELEMENT_NODE) return undefined;
   return node.attributes.find((attribute) => attribute.name === 'key')?.value;
 }
 
@@ -75,13 +75,13 @@ function matchNextChildren(
 ): { matches: ChildMatch[]; usedPrevious: Set<VNode> } {
   const matches: ChildMatch[] = [];
   const usedPrevious = new Set<VNode>();
-  let unkeyedIndex = 0;
+  const previousUnkeyed = unkeyedChildren.values();
 
   for (const next of nextChildren) {
     const key = readKey(next);
     const prev = key !== undefined && !duplicateKeys.has(key)
       ? keyedChildren.get(key)
-      : unkeyedChildren[unkeyedIndex++];
+      : previousUnkeyed.next().value;
 
     if (prev === undefined) {
       matches.push({ kind: 'inserted', next });

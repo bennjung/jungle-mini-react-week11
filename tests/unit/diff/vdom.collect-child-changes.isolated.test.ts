@@ -1,18 +1,18 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import { collectChildChanges } from '../../src/vdom/diff/collectChildChanges';
-import { findChildMatches } from '../../src/vdom/diff/findChildMatches';
-import { collectNodeChanges } from '../../src/vdom/diff/collectNodeChanges';
-import { collectMoveChanges } from '../../src/vdom/diff/collectMoveChanges';
-import type { ChildMatch } from '../../src/vdom/diff/types';
-import type { DiffCommand, VNode, VRoot } from '../../src/vdom/types';
+import { collectChildChanges } from '../../../src/vdom/diff/collectChildChanges';
+import { findChildMatches } from '../../../src/vdom/diff/findChildMatches';
+import { collectNodeChanges } from '../../../src/vdom/diff/collectNodeChanges';
+import { collectMoveChanges } from '../../../src/vdom/diff/collectMoveChanges';
+import type { ChildMatch } from '../../../src/vdom/diff/types';
+import type { DiffCommand, VNode, VRoot } from '../../../src/vdom/types';
 
-vi.mock(import('../../src/vdom/diff/findChildMatches'), () => ({
+vi.mock(import('../../../src/vdom/diff/findChildMatches'), () => ({
   findChildMatches: vi.fn()
 }));
-vi.mock(import('../../src/vdom/diff/collectNodeChanges'), () => ({
+vi.mock(import('../../../src/vdom/diff/collectNodeChanges'), () => ({
   collectNodeChanges: vi.fn()
 }));
-vi.mock(import('../../src/vdom/diff/collectMoveChanges'), () => ({
+vi.mock(import('../../../src/vdom/diff/collectMoveChanges'), () => ({
   collectMoveChanges: vi.fn()
 }));
 
@@ -133,7 +133,7 @@ describe('collectChildChanges — 하위 함수를 대체한 격리 검증', () 
       { kind: 'matched', prev: prevB, next: nextB }
     ];
     const nestedTarget = prevA.childNodes[0]!;
-    const first: DiffCommand = { type: 'update', target: prevA, data: { properties: { value: '' } } };
+    const first: DiffCommand = { type: 'update', target: prevA, data: { setProperties: { value: '' } } };
     const nested: DiffCommand = { type: 'remove', target: nestedTarget };
     vi.mocked(findChildMatches).mockReturnValue(matches);
     vi.mocked(collectNodeChanges).mockReturnValueOnce([first, nested]).mockReturnValueOnce([]);
@@ -164,7 +164,7 @@ describe('collectChildChanges — 하위 함수를 대체한 격리 검증', () 
       { kind: 'removed', prev: removed }
     ];
     const update: DiffCommand = {
-      type: 'update', target: prevKept, data: { properties: { checked: false } }
+      type: 'update', target: prevKept, data: { setProperties: { checked: false } }
     };
     const move: Extract<DiffCommand, { type: 'move' }> = {
       type: 'move', target: prevKept, parent: next, before: added

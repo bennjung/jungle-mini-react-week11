@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
-import { findChildMatches } from '../../src/vdom/diff/findChildMatches';
-import type { ChildMatch } from '../../src/vdom/diff/types';
-import type { VNode } from '../../src/vdom/types';
+import { findChildMatches } from '../../../src/vdom/diff/findChildMatches';
+import type { ChildMatch } from '../../../src/vdom/diff/types';
+import type { VNode } from '../../../src/vdom/types';
 
 function element(key?: string, tagName = 'LI', childNodes: VNode[] = []): VNode {
   return {
