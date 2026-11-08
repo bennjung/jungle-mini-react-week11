@@ -120,7 +120,7 @@ diff(prevRoot, nextRoot)
 │  ├─ 같은 type/tag → linkNode()       prev.dom을 next.dom에 연결
 │  ├─ 텍스트 변경 → update
 │  ├─ diffAttributes() → update의 속성 데이터
-│  ├─ diffProperties() → update의 properties 데이터
+│  ├─ findPropertyUpdates() → update의 setProperties·removeProperties 데이터
 │  └─ diffChildren()
 │     ├─ matchChildren()               key attribute 우선, key 없는 노드는 부모 안 순서로 대응
 │     ├─ 새 노드 → insert
@@ -165,6 +165,7 @@ VDOM은 `VRoot`와 `VNode`로 구성한다. `VRoot`는 `childNodes`와 `dom`만 
 ### 입력·선택 상태
 
 `readProperties()`는 기존 `propertySchema`를 따라 파싱된 요소의 값을 읽는다. HTML의 value·checked·selected 속성과 TEXTAREA 내용이 초기 상태의 입력값이 된다.
+스키마의 이름은 값이 false나 빈 문자열이어도 모두 포함한다. 따라서 같은 태그의 정상 생성 경로에서는 이름 삭제가 아니라 값 변경을 `setProperties`로 전달한다. Diff에 기본값 추측·재설정 로직을 추가하지 않는다. 기존 `removeProperties` 데이터 계약은 유지하되 실제 DOM 제거 정책은 이번에 구현하지 않는다(P1-PROPERTY-SNAPSHOT-01).
 실제 화면에서 사용자가 바꾼 입력 상태는 HTML 원문에 자동 반영되지 않으며, 코드 편집기에서 만드는 스냅샷에는 포함되지 않는다.
 `indeterminate`는 HTML만으로 지정할 수 없어 기본값을 읽는다. 실제 화면의 입력까지 이력에 담는 양방향 동기화는 이 흐름에 포함하지 않는다.
 
@@ -200,7 +201,7 @@ renderNode(vnode)
 
 `restoreSnapshot()`의 `restoreEditor` 기본값은 true다. applyPatch 실패 복구는 false로 호출해 실제 영역만 복원하고 편집기 HTML은 유지한다.
 
-초기화는 빈 이전 VDOM을 비교 기준으로 사용하므로 Diff가 연결할 유지 노드가 없고, 샘플 `VRoot`와 모든 `VNode`의 `dom`은 Patch 성공 후에 전체 연결된다. 빈 이전 VDOM의 `VRoot`는 작업 대상인 실제 컨테이너를 가리킨다.
+초기화는 빈 이전 VDOM을 비교 기준으로 사용하므로 Diff가 연결할 유지 자식은 없다. 샘플 `VRoot.dom`은 Diff에서 실제 컨테이너에 연결되고, 삽입할 모든 `VNode`와 하위 트리의 `dom`은 Patch에서 연결된다. 빈 이전 VDOM의 `VRoot`는 작업 대상인 실제 컨테이너를 가리킨다.
 
 초기 실제 영역은 비어 있다는 전제다. 이미 샘플 DOM이 있는 페이지에서는 이를 빈 루트로 간주하면 중복 생성되므로 초기화 경로를 혼용하지 않는다.
 최상위 VDOM은 실제 영역 컨테이너에 대응하는 `VRoot`이며, 컨테이너 자체의 태그·속성은 Diff하지 않는다. 이력 복원 시 `VRoot.dom`도 현재 `actualRoot`로 연결한다.
@@ -230,7 +231,7 @@ applyPatch 실패 복구는 `peek(0)`으로 현재 이력 데이터를 읽고, `
 | 초기화·버튼 연결 | INIT-01–INIT-02 |
 | HTML 읽기·파싱 | HTML-01–HTML-03 |
 | 스냅샷 데이터·실제 DOM 참조 없음 | SNAP-01–SNAP-06 |
-| 순수한 변경 계산 | DIFF-01–DIFF-09 |
+| 변경 계산·다음 VDOM의 유지 노드 연결 | DIFF-01–DIFF-09 |
 | 명령 의존성·중복 방지 | ORDER-01–ORDER-05 |
 | 유지 노드 참조 연결 | DIFF-01–DIFF-09 |
 | 실제 DOM 연산·새 노드 참조 연결 | PATCH-01–PATCH-08 |

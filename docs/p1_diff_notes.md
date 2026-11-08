@@ -108,10 +108,10 @@ orderChanges(changes: DiffCommand[]): DiffCommand[];
 ```
 
 - 포함: 노드 대응, 종류·태그·텍스트·속성·프로퍼티 비교, 자식 재귀, 삽입·제거·이동 판단, 명령 의존 순서.
-- 제외: HTML 파싱, 실제 DOM 변경, 다음 VDOM의 실제 DOM 참조 연결, 이력 저장·복원.
+- 제외: HTML 파싱, 실제 DOM 변경·생성, 이력 저장·복원. 유지 노드의 참조 연결은 P1-PATCH-LINK-02에 따라 Diff가 담당한다.
 - 변경 없음은 `[]`이다. 변경 없는 노드에 별도 명령을 만드는 계약은 없다.
-- 모든 경우에 이전·다음 입력 VDOM과 실제 DOM을 수정하지 않는다.
-- 다음 `VRoot`와 모든 `VNode`의 `dom`은 Diff·정렬 종료까지 `null`이다.
+- 이전 VDOM·실제 DOM·다음 VDOM의 비교용 데이터는 수정하지 않는다. 다음 VDOM의 `dom` 필드 연결만 허용한다.
+- Diff 종료 시 다음 `VRoot`와 유지·이동·수정 노드의 `dom`은 이전 실제 DOM 참조를 가진다. 삽입·교체할 노드와 그 하위 트리는 `null`로 유지한다. 정렬 함수는 연결을 변경하지 않는다.
 - 임시 DOM 객체의 동일성이나 `dom` 참조가 아니라 VDOM 데이터와 대응 규칙으로 비교한다.
 
 ### 입력 데이터
@@ -133,7 +133,8 @@ type UpdateData = {
   nodeValue?: string;
   setAttributes?: VNodeAttribute[];
   removeAttributes?: string[];
-  properties?: VNodeProperties;
+  setProperties?: VNodeProperties;
+  removeProperties?: string[];
 };
 
 type DiffCommand =
@@ -226,9 +227,11 @@ key 없는 자식이 여러 개라면 그 자식들끼리 첫째·둘째 순서�
 
 ```text
 diff(prevRoot, nextRoot)
+├─ nextRoot.dom = prevRoot.dom
 ├─ 루트의 자식 대응·비교
 ├─ compareNode(prev, next)
 │  ├─ 종류·태그 변경 → replace
+│  ├─ 같은 종류·태그 → linkNode(prev, next), 변경 없는 노드도 연결
 │  ├─ 텍스트 변경 → update
 │  ├─ diffAttributes() → 추가·변경·삭제 데이터
 │  ├─ diffProperties() → 변경된 입력·선택 상태
@@ -250,35 +253,20 @@ diff(prevRoot, nextRoot)
 - 새 하위 트리 전체 렌더링과 개별 자식 삽입을 중복 적용하지 않는다.
 - 전체 경우에서 유일한 명령 순서나 전역 최소 명령 개수를 요구하는 계약은 아니다. 개별 테스트가 지정한 결과는 그대로 따른다.
 
-## 5. 변경 없는 노드의 참조 연결은 Diff 담당 범위가 아니다
+## 5. 변경 없는 노드의 참조 연결도 Diff가 담당한다
 
-**[찬의 방향]** 변경 없는 노드는 변경 명령이 없다는 전제에서 로직을 고안한다.
+**[찬이 승인한 변경·P1-PATCH-LINK-02]** 이전의 Patch 담당 경계를 대체한다. Diff는 변경 명령을 만들기 위해 찾은 대응을 그대로 이용해 유지·이동·수정 노드에 `prev.dom`을 연결한다. 변경 없는 노드의 연결을 위해 별도 명령이나 대응 정보 반환을 추가하지 않는다.
 
-**[찬의 역할 경계 확정]** 변경 없는 노드의 실제 DOM 참조 연결은 Diff가 판단하지 않는다. Diff는 변경 명령을 계산하기 위해 노드 대응과 차이를 판단하지만, Patch의 참조 연결 대상·방식이나 공유 함수 도입을 결정하지 않는다. 변경 없는 노드의 연결을 위해 별도 명령이나 대응 정보 반환을 추가하지 않는다.
-
-**[공용 계약]** Patch 성공 후에는 변경 없는 노드를 포함한 다음 VDOM 전체에 실제 DOM 참조가 연결되어야 한다. 참조 연결은 Diff의 책임이 아니다.
+**[공용 계약]** Diff는 `VRoot`를 연결하고, 종류·태그가 같은 대응 노드를 연결한 뒤 자식도 재귀한다. 삽입·교체할 노드와 그 하위 트리는 연결하지 않는다. Patch는 새 실제 DOM 생성과 연결을 담당하며 성공 후 다음 VDOM 전체가 연결된다.
 
 ```html
 <!-- 이전 --> <div><p>A</p><span>유지</span></div>
 <!-- 다음 --> <div><p>B</p><span>유지</span></div>
 ```
 
-이 예시에서 변경 명령은 텍스트 A → B update면 충분하다. 하지만 다음 VDOM의 div·p·span·텍스트는 모두 별도 객체이므로 Patch에서 실제 DOM 참조를 연결해야 한다.
+이 예시에서 변경 명령은 텍스트 A → B update면 충분하다. 다음 VDOM의 div·p·span·텍스트는 별도 객체이므로 Diff가 모두 이전 실제 DOM 참조를 연결한다. 실제 DOM의 텍스트 변경은 Patch까지 수행하지 않는다.
 
-### 참고: 이전 AI 제안 — Diff 구현 기준에서 제외
-
-아래는 Patch가 연결을 수행하는 방법에 대한 이전 제안의 기록이다. 찬의 역할 경계에 따라 Diff 담당자가 확정할 항목이 아니며, Diff 구현의 선행 결정으로 요구하지 않는다.
-
-1. Diff는 변경 명령만 반환하고 다음 VDOM을 수정하지 않는다.
-2. Patch가 동일한 노드 대응 규칙을 사용해 이전·다음 트리를 다시 대응시킨다.
-3. 대응되고 종류·태그가 같은 노드는 `prev.dom`을 `next.dom`에 연결하고 자식도 순회한다.
-4. 삽입·교체될 노드는 기존 DOM에 연결하지 않는다. 해당 명령 실행 시 새 DOM을 생성·연결한다.
-5. 다음 `VRoot.dom`도 실제 컨테이너에 연결한다.
-6. 모든 명령 적용 후 다음 트리 전체의 연결을 확인한다.
-
-장점은 기존 `DiffCommand[]` 반환 계약을 유지하고 변경 없는 명령을 추가하지 않는 것이다. 비용은 노드 대응을 두 번 계산하는 것이다. 동일 규칙의 중복 구현에 따른 차이를 피하려면 대응 계산을 공유하는 방식이 필요하다.
-
-**[미확정·별도 담당]** 이 제안을 채택했다는 뜻이 아니다. 참조 연결 방식과 Patch 인터페이스는 Patch 담당 범위에서 결정한다. 공용 `P1-PATCH-LINK-01`의 대안 B를 이 문서로 폐기하지는 않지만, 개인 Diff 작업 기준은 기존 `DiffCommand[]` 반환을 유지한다. 이후 공용 계약 변경 요청이 있으면 영향 범위를 별도로 확인한다. 공유 대응 함수는 채택된 구조가 아니다.
+개인 코드에서는 `findChildMatches()`의 결과를 `collectNodeChanges()`에 전달해 `linkNode()`를 호출한다. Patch에서 전체 매칭을 다시 실행하거나 개인 짝 찾기를 다른 공유 구조로 옮기지 않는다. `DiffCommand[]` 반환과 기존 key/keyless 대응 규칙은 유지한다.
 
 ## 6. 별도로 남은 경계 계약
 
@@ -314,7 +302,7 @@ Diff는 replace와 move의 역할을 섞지 않고, 지정 대상과 위치 및 
 
 | 기존 ID | Diff 담당 확인 내용 |
 | --- | --- |
-| DIFF-01 | 동일 데이터는 빈 배열, 입력·실제 DOM 불변 |
+| DIFF-01 | 동일 데이터는 빈 배열, 비교 데이터·이전 VDOM·실제 DOM 불변, 다음 유지 노드 연결 |
 | DIFF-02 | 텍스트 update, 부모 교체 없음 |
 | DIFF-03 | 속성 추가·변경·삭제, 나열 순서 무시 |
 | DIFF-04 | 종류·태그 교체, 하위 중복 명령 없음. 같은 key 태그 변경 사례는 CONF-03 확정 조건 유지 |
@@ -334,7 +322,7 @@ Diff는 replace와 move의 역할을 섞지 않고, 지정 대상과 위치 및 
 
 환경은 기존 결정대로 TypeScript 엄격 모드·Vitest·jsdom이며 `npm run check`로 타입 검사와 테스트를 실행한다. 현재 코드는 `src/vdom/diff/`에 함수별로 나뉘어 있다. 함수 뼈대는 §9, 취합 로직 작성은 §11, 파일 분리와 격리 검증은 §12, 형제 짝 찾기 구현은 §13을 따른다. Diff 전체 동작 구현과 기능 검증은 완료되지 않았다.
 
-공용 명세를 옮긴 단위 테스트는 [tests/unit/vdom.diff.test.ts](../tests/unit/vdom.diff.test.ts)에 있다. 작성 범위·보류 사유·실행 결과는 §10을 따른다. 테스트 코드가 있다는 것이 Diff 구현이나 Patch 연계 검증이 완료되었다는 뜻은 아니다.
+공용 명세를 옮긴 단위 테스트는 [tests/unit/diff/vdom.diff.test.ts](../tests/unit/diff/vdom.diff.test.ts)에 있다. 작성 범위·보류 사유·실행 결과는 §10을 따른다. 테스트 코드가 있다는 것이 Diff 구현이나 Patch 연계 검증이 완료되었다는 뜻은 아니다.
 
 ## 8. AI 작업 통제 기준
 
@@ -365,8 +353,8 @@ diff → collectChildChanges → findChildMatches
      → orderChanges
 ```
 
-- 초기에는 `diff()`만 자식 비교와 최종 정렬 호출을 연결했다. 이후 §11에서 `collectChildChanges()`, §13에서 `findChildMatches()`를 작성했다. 그 밖의 하위 함수는 여전히 미구현 오류를 던진다.
-- `Parent`, `ChildMatch`, `AttributeUpdate`는 현재 `src/vdom/diff/types.ts`에 둔다. `AttributeUpdate`는 공용 인터페이스 문서에 있는 이름·형태를 따른다.
+- 초기에는 `diff()`만 자식 비교와 최종 정렬 호출을 연결했다. 이후 §11에서 `collectChildChanges()`, §13에서 `findChildMatches()`, §14에서 노드 연결·취합, §16에서 속성 비교, §17에서 프로퍼티 비교, §19에서 이동 판단을 작성했다. 정렬은 미구현 오류를 던진다.
+- `Parent`, `ChildMatch`, `AttributeUpdate`는 현재 `src/vdom/diff/types.ts`에 둔다. `AttributeUpdate`는 내부 타입이며 작업이 없는 필드를 생략한다. 변경이 없으면 빈 객체다.
 - 자식 대응·이동 선택·명령 정렬 알고리즘은 구현하지 않는다.
 - 미구현 함수를 빈 배열 반환으로 대체하지 않는다. 변경 없음으로 오인하는 것을 막기 위한 선택이다.
 - 사용되지 않는 매개변수에는 `_` 접두사를 붙여 기존 TypeScript의 미사용 매개변수 검사를 통과하도록 한다.
@@ -391,7 +379,7 @@ diff → collectChildChanges → findChildMatches
 | compareNode | collectNodeChanges | 노드 자체와 하위 트리의 DiffCommand[] |
 | planMoves | collectMoveChanges | move 명령 배열 |
 | diffAttributes | findAttributeUpdates | 설정할 HTML 속성과 제거할 속성 이름 |
-| diffProperties | findPropertyUpdates | update.data에 사용할 properties 항목 |
+| diffProperties | findPropertyUpdates | update.data의 설정·제거 프로퍼티 항목 |
 
 선택 이유는 입력·출력·책임을 이름에 드러내기 위해서다. 영향 범위는 개인 함수 뼈대와 이 문서이며, 함수의 입력·출력 타입과 미구현 상태, 공용 계약과 기존 테스트는 변경하지 않는다.
 
@@ -401,12 +389,12 @@ diff → collectChildChanges → findChildMatches
 
 ### 작성 내용과 선택 기록
 
-- 파일: [tests/unit/vdom.diff.test.ts](../tests/unit/vdom.diff.test.ts).
+- 파일: [tests/unit/diff/vdom.diff.test.ts](../tests/unit/diff/vdom.diff.test.ts).
 - `diff()` 결과와 명세에 있는 `orderChanges()`의 정렬 결과를 호출해 검증한다. 현재 외부 진입점은 diff만 노출하고, 정렬 테스트는 orderChanges 파일에서 직접 가져온다. 그 밖의 내부 함수 호출 구조는 이 테스트로 강제하지 않는다.
 - `DIFF-03`은 실제 속성 변경과 나열 순서만 바뀐 경우를 나눈다. 속성 변경을 하나의 update로 합칠지 나눌지는 강제하지 않는다.
 - `DIFF-05`는 value A→B, value A→빈 문자열, checked true→false, OPTION selected false→true로 나눈다.
 - 명령의 VNode 객체 참조는 `toBe`로 확인한다. 데이터가 같다는 이유로 다른 객체를 대상으로 해도 통과시키지 않는다.
-- 공통 검증으로 이전·다음 VDOM의 데이터·배열·객체 참조 및 실제 DOM의 데이터·노드 동일성을 확인한다. 다음 `VRoot`·모든 `VNode`의 `dom`도 null인지 확인한다.
+- 공통 검증으로 이전·다음 VDOM의 데이터·배열·객체 참조 및 실제 DOM의 데이터·노드 동일성을 확인한다. 작성 당시에는 다음 `VRoot`·모든 `VNode`의 `dom`도 null로 유지하도록 확인했다. 이 조건은 P1-PATCH-LINK-02로 대체했으며 §14에서 다음 VDOM의 `dom` 연결만 허용하도록 검증을 동기화했다.
 - 생성 함수가 미구현이어도 Diff 테스트를 준비할 수 있도록 테스트 내부에서 HTML을 파싱해 독립 입력을 구성한다. 이는 테스트 준비용 코드이며 생성 함수의 구현·검증을 대신하지 않는다.
 - `ORDER-02`는 명세가 허용한 별도 자식 삽입 계획도 배제하지 않고 부모 선행·동일 노드 명령 중복을 확인한다. 실제 하위 DOM 중복 생성 여부는 Patch 적용 후 검증으로 남긴다.
 - `ORDER-03`은 제거 대상, 삽입 대상, 다음 부모·기준 형제 참조와 새 기준 형제의 삽입 선행을 확인한다. 최종 DOM 순서·객체 유지 여부는 Patch 적용 후 검증으로 남긴다.
@@ -435,17 +423,17 @@ diff → collectChildChanges → findChildMatches
 
 - 양쪽 직계 자식이 모두 비어 있으면 `[]`를 반환한다.
 - `findChildMatches()`에서 받은 새 자식은 insert, 사라진 자식은 remove 명령으로 만든다. 삽입·제거 하위 트리에 별도로 내려가지 않는다.
-- 대응된 자식은 `collectNodeChanges()`의 반환 명령을 모은다. 그 함수가 자식 비교를 다시 호출하면 하위 명령도 취합되는 구조다. 해당 함수 자체는 아직 미구현이다.
+- 대응된 자식은 `collectNodeChanges()`의 반환 명령을 모은다. 그 함수가 자식 비교를 다시 호출하면 하위 명령도 취합되는 구조다. 이 절 작성 당시 해당 함수는 미구현이었으며 이후 §14에서 연결·취합 흐름을 작성했다.
 - `collectMoveChanges()`의 반환 명령을 마지막에 취합한다. 이것은 최종 실행 순서가 아니다. `orderChanges()`의 책임은 유지한다.
 - 삽입의 `before`는 다음 목록의 바로 오른쪽 VNode, 마지막이면 null로 지정한다. `ORDER-01`처럼 새 기준 형제의 생성 의존성은 최종 정렬에서 처리한다.
 - 오른쪽 형제를 찾는 표를 한 번 만들어 반복 탐색을 피한다. 이 표는 다음 VDOM 객체끼리의 관계만 저장한다. Patch를 모의 실행하거나 작업용 자식 배열을 변경하지 않는다.
-- 입력 배열·VNode 데이터·DOM 참조는 수정하지 않는다. 하위 함수의 오류를 삼키거나 변경 없음으로 바꾸지 않는다.
+- 입력 배열·VNode 비교용 데이터·이전 DOM 참조는 수정하지 않는다. 이후 §14의 변경으로 대응된 다음 VNode의 DOM 참조는 연결한다. 하위 함수의 오류를 삼키거나 변경 없음으로 바꾸지 않는다.
 - `parent: VNode | VRoot` 반영은 공용 결정 `P1-VDOM-PARENT-01`을 따른다. 기존 테스트 기대 결과는 유지한다.
 
 ### 테스트와 검증 상태
 
-- 새 테스트: `tests/unit/vdom.collect-child-changes.test.ts`. 빈 자식 목록, 루트 아래 하위 트리 삽입, 연속 삽입의 기준 형제, 상위 제거의 하위 중복 방지를 검증하도록 작성했다.
-- 기존 `tests/unit/vdom.diff.test.ts`는 수정하지 않았다.
+- 새 테스트: `tests/unit/diff/vdom.collect-child-changes.test.ts`. 빈 자식 목록, 루트 아래 하위 트리 삽입, 연속 삽입의 기준 형제, 상위 제거의 하위 중복 방지를 검증하도록 작성했다.
+- 기존 `tests/unit/diff/vdom.diff.test.ts`는 수정하지 않았다.
 - 구현 전 새 테스트 4개가 모두 `collectChildChanges: 미구현`으로 실패하는 것을 확인했다.
 - 작성 후 `npm run typecheck` 통과, `git diff --check` 통과.
 - 전체 테스트: 2개 통과, 20개 실패, 2개 건너뜀, 5개 보류. 새 테스트 중 빈 목록은 통과하고 나머지 3개는 `findChildMatches: 미구현`으로 실패한다. 기존 실패도 `findChildMatches` 또는 `orderChanges` 미구현에서 발생한다.
@@ -477,12 +465,12 @@ src/vdom/diff/
 - 내부 호출은 `index.ts`를 거치지 않고 개별 함수 파일에서 직접 가져온다. 테스트에서 해당 모듈을 대체할 수 있고, 내부 의존성이 진입점에 되돌아가지 않도록 하기 위한 선택이다.
 - 공통 VDOM·명령 타입은 기존 `src/vdom/types.ts`를 유지한다. Diff 내부 타입만 `diff/types.ts`에 둔다.
 - `collectChildChanges()`의 취합 로직을 그대로 옮겼다. 테스트 편의를 위한 함수 인자·주입 객체·공유 상태는 추가하지 않았다.
-- 파일 분리 당시에는 짝 찾기·노드 변경·이동·속성·프로퍼티·정렬 함수가 미구현이었다. 이후 §13에서 짝 찾기만 작성했다.
+- 파일 분리 당시에는 짝 찾기·노드 변경·이동·속성·프로퍼티·정렬 함수가 미구현이었다. 이후 §13에서 짝 찾기, §14에서 노드 연결·취합 흐름을 작성했다.
 - 공용 인터페이스 문서는 새 외부 진입점과 내부 계약의 위치를 구분한다. 파일 분리 직후에는 기존 테스트를 그대로 두었고, 이후 공개 범위를 diff로 제한하면서 기존 테스트 두 파일의 세부 함수 가져오기 경로만 바꿨다. 공용 테스트 명세와 기대 결과는 바꾸지 않았다.
 
 ### 격리 테스트의 범위
 
-파일: [tests/unit/vdom.collect-child-changes.isolated.test.ts](../tests/unit/vdom.collect-child-changes.isolated.test.ts).
+파일: [tests/unit/diff/vdom.collect-child-changes.isolated.test.ts](../tests/unit/diff/vdom.collect-child-changes.isolated.test.ts).
 
 실제 `collectChildChanges()`를 실행하고 `findChildMatches`, `collectNodeChanges`, `collectMoveChanges` 모듈만 가짜 결과로 대체한다. 가짜 함수 자체의 정답 여부가 아니라 취합 함수의 실제 반환값·객체 참조·인자 전달·오류 전달을 검증한다.
 
@@ -509,7 +497,7 @@ src/vdom/diff/
 
 - 찬의 지적에 따라 `index.ts`는 `diff()`만 내보낸다. 세부 함수와 내부 타입은 외부 진입점에서 제외한다.
 - 기존 테스트의 세부 함수는 해당 파일에서 직접 가져온다. 기존 기대 결과는 변경하지 않는다.
-- `tests/unit/vdom.diff-entry.test.ts`는 외부 진입점의 실행 시 내보내기가 diff 하나뿐인지 검증한다. 변경 전 세부 함수가 함께 노출되어 실패하는 것을 확인했다.
+- `tests/unit/diff/vdom.diff-entry.test.ts`는 외부 진입점의 실행 시 내보내기가 diff 하나뿐인지 검증한다. 변경 전 세부 함수가 함께 노출되어 실패하는 것을 확인했다.
 - 변경 후 외부 진입점 테스트 1개와 취합 격리 테스트 10개, 총 **11개 통과**. 타입 검사와 `git diff --check`도 통과했다. 이 확인만으로 기존 실제 하위 함수 기반 테스트의 실패가 해결됐다고 보고하지 않는다.
 
 ## 13. findChildMatches 구현 — 같은 파일의 비공개 보조 함수
@@ -532,12 +520,12 @@ findChildMatches(prevChildren, nextChildren)
 - 한쪽에서 중복된 key 값은 양쪽에서 순서 대응으로 처리한다. 무효화된 노드와 원래 key 없는 노드를 각 목록의 출현 순서로 함께 짝짓는다. 따라서 무효화된 서로 다른 key 값 사이에서도 순서에 따라 짝이 생길 수 있다. 이는 고유 key 변경을 순서 대응하는 것과 다르다.
 - 고유 key의 조회 실패는 inserted다. 이전의 key 없는 노드로 대체하지 않는다. 명시된 빈 문자열 key도 고유 key로 사용할 수 있다.
 - 모든 저장소는 호출 내부 지역 값이다. 다음 호출이나 다른 부모에 이전 key 정보를 남기지 않는다. 자식 아래로 재귀 탐색하지 않는다.
-- 입력 배열·속성·프로퍼티·하위 데이터·DOM 참조는 변경하지 않는다. 순서 대응은 배열을 shift하지 않고 인덱스로 읽는다.
+- 입력 배열·속성·프로퍼티·하위 데이터·DOM 참조는 변경하지 않는다. 순서 대응은 `unkeyedChildren.values()`의 반복자로 다음 이전 노드를 하나씩 읽는다. 사용자가 승인한 정리로 수동 인덱스 증가를 제거했으며, keyed 조회에서는 반복자를 소비하지 않는다. 대응 규칙과 반환 결과는 유지한다.
 - 기존 타입·명령 취합 로직·노드 비교·이동 판단·정렬·공용 테스트 기대 결과는 변경하지 않는다. 공용 CONF-03은 그대로 두고 개인 방향의 검증을 별도 테스트 파일에 둔다.
 
 ### 테스트와 결과
 
-파일: [tests/unit/vdom.find-child-matches.test.ts](../tests/unit/vdom.find-child-matches.test.ts).
+파일: [tests/unit/diff/vdom.find-child-matches.test.ts](../tests/unit/diff/vdom.find-child-matches.test.ts).
 
 - 작성 전 테스트 19개가 모두 `findChildMatches: 미구현`으로 실패하는 것을 확인했다.
 - 작성 후 19개 모두 통과했다. 빈 입력, 추가·제거, 고유 key 순서 변경·변경값·누락, key 없는 요소와 텍스트의 순서 대응, 빈 key, id와 key 구분, 양쪽 각각의 중복과 세 번 이상 중복, 여러 충돌 값, 호출 간 독립성을 포함한다.
@@ -545,3 +533,102 @@ findChildMatches(prevChildren, nextChildren)
 - 기존 취합 격리 테스트 10개와 외부 진입점 테스트 1개도 통과했다. 세 파일 합계 **30개 통과**.
 - `npm run typecheck`, `git diff --check` 통과.
 - 전체 테스트: **32개 통과, 20개 실패, 2개 건너뜀, 5개 보류**. 남은 실패는 `collectNodeChanges`, `collectMoveChanges`, `orderChanges` 미구현으로 발생한다. 기존 테스트의 실패를 숨기거나 기대 결과를 변경하지 않았다.
+
+## 14. Diff의 DOM 연결 — 탑다운 흐름 유지
+
+**[찬이 요청·승인한 변경]** P1-PATCH-LINK-02를 개인 Diff 코드에 적용한다. 루트와 유지·이동·수정 노드는 Diff가 연결하며, 삽입·교체 노드와 그 자손은 Patch 생성 시 연결한다. 기존 key/keyless 짝 찾기 규칙과 명령 반환 계약은 유지한다.
+
+```text
+diff
+├─ nextRoot.dom = prevRoot.dom
+├─ collectChildChanges
+│  ├─ findChildMatches
+│  ├─ 새 자식 → insert / 사라진 자식 → remove
+│  ├─ collectNodeChanges
+│  │  ├─ linkNode: 종류·태그 불일치 → 연결 없이 replace 후 종료
+│  │  └─ 일치 → 이전 DOM 연결
+│  │     ├─ 텍스트 update 또는 빈 배열
+│  │     └─ 요소의 속성·프로퍼티 변경 취합 → collectChildChanges 재귀
+│  └─ collectMoveChanges
+└─ orderChanges
+```
+
+- `src/vdom/link.ts`는 공용 계약의 `linkNode()`만 구현했다. 전체 트리 재매칭, 별도 대응표, 새로운 식별 규칙은 추가하지 않는다. `linkMatchedDom()` 등 다른 공용 유틸리티는 이번 범위에 포함하지 않는다.
+- 이 작업 당시 `collectNodeChanges()`는 교체·텍스트 변경과 요소의 하위 결과 취합·재귀를 수행했고, `findAttributeUpdates()`, `findPropertyUpdates()`, `collectMoveChanges()`, `orderChanges()`는 미구현이었다. 이후 속성 비교 구현은 §16을 따른다.
+- 변경 없는 노드와 자손도 연결한다. 삽입 지점 이후 노드는 실제 DOM의 현재 인덱스가 아니라 기존 `findChildMatches()`가 찾은 짝의 DOM을 이어받는다. key 없는 노드는 기존 순서 대응이며 중간 삽입의 객체 유지가 보장되지 않는다.
+- 이전 VDOM이 실제 DOM에 연결되어 있다는 전제를 유지한다. 누락된 이전 참조의 오류 처리나 Diff 실패 시 부분 연결된 다음 VDOM의 폐기 정책은 새로 확정하지 않는다.
+
+### 테스트와 결과
+
+- 에이전트가 명세 밖의 `vdom.diff-linking.isolated.test.ts` 10개를 임의 추가했으나, 사용자의 정정에 따라 제거했다. 해당 격리 테스트의 통과를 현재 검증 근거로 사용하지 않는다.
+- 이번 테스트 수정은 `p1_test_cases.md` §5의 기존 `DIFF-01`–`DIFF-09`에 한정한다. `tests/unit/diff/vdom.diff.test.ts`의 기존 입력·명령 기대 결과는 유지하고, 문서가 지정한 Diff 반환 직후의 실제 DOM 참조 연결 검증을 추가했다. 테스트 케이스 ID·입력·기대 결과는 새로 만들지 않았다.
+- `DIFF-01`·`02`·`03`·`05`·`06`·`08`·`09`는 문서에 명시된 대응 노드와 모든 자손·루트의 DOM 객체 동일성을 확인한다. `DIFF-07`은 b와 a의 순서가 바뀌어도 각각 이전 b·a의 DOM을 연결하는지 직접 확인한다.
+- `DIFF-04`에는 교체할 다음 노드·자손의 null 유지 검증을 추가했으나, 문서의 CONF-03 확정 조건에 따라 기존 `it.skip`을 유지한다.
+- 실제 `diff()`만 호출하며 하위 함수를 대체하지 않는다. 다음 VDOM의 `dom` 연결만 허용하고 이전 VDOM·다음 비교 데이터·실제 DOM 보존 검증은 유지한다. Patch·History 검증은 이번 범위에 추가하지 않는다.
+- 타입 검사 통과. 전체 테스트: **32개 통과, 기존 20개 실패, 2개 건너뜀, 5개 보류**. 실행된 실패 원인은 `findAttributeUpdates`, `collectMoveChanges`, `orderChanges` 미구현이다. Diff 반환까지 도달하지 못한 테스트의 새 연결 검증은 아직 완료되지 않았으며, 이를 통과한 것으로 보고하지 않는다.
+- 동기화 문서: PRD·함수 흐름의 초기 `VRoot` 연결 시점, 테스트 명세의 비교 데이터 보존 표현, 인터페이스·결정 기록의 이번 구현 범위, 이 개인 작업 문서.
+
+## 15. 현재 노드의 명령 제약과 테스트 위치
+
+- **사용자 요청:** `collectNodeChanges()`가 직접 만드는 명령은 replace·update이며, 자식 명령은 별도로 받아 합치는 제약을 테스트한다. Diff 관련 단위 테스트를 `tests/unit/diff/`에 모은다.
+- **명세:** `p1_test_cases.md`의 NODE-COMMAND-01을 추가했다. 동일 key의 태그 변경이라는 미확정 정책을 가정하지 않고, 이미 대응된 서로 다른 노드 종류를 직접 전달해 replace 분기만 검증한다.
+- **범위:** `tests/unit/diff/vdom.collect-node-changes.test.ts`의 4개 검증은 실제 `collectNodeChanges()`를 실행하되 미구현인 속성·프로퍼티 비교와 자식 비교만 대체한다. 자식 명령 판단·정렬·Patch 전체를 검증한 결과가 아니다.
+- **이동:** 기존 Diff 진입점·Diff·자식 취합·짝 찾기 시험 파일 5개를 `tests/unit/diff/`로 옮기고 가져오기 경로만 조정했다. 생성 시험은 이동하지 않았다. 기존 테스트 기대 결과는 바꾸지 않았다.
+- **검증:** 새 시험 4개 통과, 타입 검사 통과. 전체 시험은 36개 통과·20개 실패·2개 건너뜀·5개 보류다. 실패 원인은 기존 `findAttributeUpdates`, `collectMoveChanges`, `orderChanges` 미구현이다.
+
+### 주석의 재귀·교체 동작 검증
+
+- 사용자의 요청에 따라 `tests/unit/diff/vdom.collect-node-recursion.test.ts`에 NODE-COMMAND-02 검증 2개를 추가했다. 변경 없는 중첩 트리에서 실제 자식 대응·재귀·DOM 연결을 검증하고, 교체 트리의 모든 다음 노드가 미연결인지 확인한다.
+- 속성·프로퍼티·이동 계산은 미구현이라 대체한다. 이미 대응된 노드 쌍을 직접 전달하므로 CONF-03의 key 대응 정책이나 전체 Diff·Patch를 검증한 것은 아니다.
+- 기존 NODE-COMMAND-01 시험 4개와 신규 2개, 총 6개 통과. 타입 검사 통과. 전체 시험은 이번 추가 후 실행하지 않았다.
+
+### 속성 변경의 내부 반환 형태
+
+- 사용자의 요청에 따라 내부 `AttributeUpdate`의 두 필드를 선택 항목으로 변경했다. `findAttributeUpdates()`는 작업이 없는 필드를 생략하고 변경이 없으면 `{}`를 반환해야 한다. 상위 `collectNodeChanges()`는 기존 `UpdateData`에 속성·프로퍼티 결과를 합치며 빈 객체인 경우 update를 만들지 않는다.
+- 이 변경 당시 `findAttributeUpdates()`의 비교 알고리즘은 미구현 상태였다. 기존 격리 시험의 대체 결과를 새 계약에 맞췄으며 명령의 외부 계약이나 시험 명세의 기대 결과는 변경하지 않았다. 이후 속성 비교 구현은 §16을 따른다.
+
+## 16. HTML 속성 변경 계산
+
+- **사용자가 승인한 범위:** `findAttributeUpdates()`만 구현한다. 속성명 기준 추가·변경·삭제를 찾고, 순서 변경은 무시하며, 변경이 없으면 `{}`를 반환한다. 프로퍼티 비교·이동·정렬·Patch는 구현하지 않는다.
+- **선택과 이유:** 기존 HTML 속성 목록을 이름별 `Map`으로 조회해 다음 목록에서 추가·변경, 이전 목록에서 삭제를 찾는다. 속성마다 반대편 배열 전체를 반복 탐색하지 않으며, 기존 `AttributeUpdate`를 재사용한다. 입력 목록과 속성 객체는 변경하지 않는다.
+- **시험:** 공용 DIFF-03의 두 입력과 기대 결과를 `tests/unit/diff/vdom.find-attribute-updates.test.ts`에 함수 단위로 적용했다. 구현 전 2개 모두 미구현 오류로 실패했고, 구현 후 2개 통과했다. 기존 DIFF-03의 전체 `diff()` 테스트를 대체하거나 기대 결과를 바꾸지 않는다.
+- **검증:** 타입 검사와 `git diff --check` 통과. 전체 테스트 40개 통과, 20개 실패, 2개 건너뜀, 5개 보류. 실패는 `findPropertyUpdates`, `collectMoveChanges`, `orderChanges` 미구현이며, 전체 `diff()` 및 Patch 완료를 의미하지 않는다.
+
+## 17. DOM 프로퍼티 변경 계산
+
+- **사용자가 승인한 범위:** `findPropertyUpdates()`에서 추가·변경은 `setProperties`, 사라진 이름은 `removeProperties`로 계산한다. 값이 같으면 생략하고 입력 객체와 실제 DOM을 수정하지 않는다.
+- **값 범위:** 문서상 현재 수집 대상은 문자열과 불리언이다. 같은 이름의 값은 엄격 부등 비교한다. `VNodeProperties`는 여전히 `unknown`이며 Snapshot 생성은 미구현이므로 타입이 원시값만 보장한다고 주장하지 않는다. 참조형 값의 내용 비교 정책은 확정하지 않는다.
+- **시험:** 기존 DIFF-05의 값 변경·false·빈 문자열과 승인된 추가·제거·혼합·변경 없음·입력 보존을 `tests/unit/diff/vdom.find-property-updates.test.ts`에 작성했다. 구현 전 8개 미구현 실패, 구현 후 8개 통과. 기존 DIFF-05와 격리 테스트의 명령 필드를 `setProperties`로 동기화했다.
+- **검증:** 타입 검사 통과. 전체 테스트 48개 통과, 20개 실패, 2개 건너뜀, 5개 보류. 실패 원인은 `collectMoveChanges`, `orderChanges` 미구현이다. 실제 DOM 프로퍼티 제거 방식과 전체 Patch 검증은 미확정·미완료다.
+
+## 18. 이동 테스트 선작성과 알고리즘 후보
+
+### 상위 호출 흐름 작성
+
+- 사용자 요청에 따라 `collectMoveChanges()`의 1레벨 흐름을 작성했다. `collectMatchedChildren()`로 대응된 기존 형제의 이전·목표 순서를 받고, `findMovedChildren()`로 이동할 이전 노드를 선택하고, `createMoveCommands()`로 명령을 만든다.
+- 1레벨 작성 당시 세 하위 함수는 같은 파일의 비공개 미구현 함수였다. 이후 구현은 §19를 따른다. 양쪽 순서 배열은 동일한 이전 VNode 참조로 표현하고, 최종 명령 생성 시 기존 `matches`로 다음 VNode를 찾는 계약이다. 별도 공용 타입·짝 찾기·실제 DOM 연산은 추가하지 않는다.
+
+- **당시 승인 범위:** 고유 key 형제의 여러 이동·삽입·삭제 사례와 작은 목록 전체 순열의 테스트를 먼저 작성한 뒤 알고리즘을 고안했다. 이 단계에서는 제품 이동·정렬·Patch를 구현하지 않았으며, 이후 이동 구현 승인은 §19를 따른다.
+- **추가 파일:** `tests/unit/diff/vdom.collect-move-changes.test.ts`. 공용 테스트 명세에 MOVE-01–MOVE-07을 기록하고 DIFF-07의 B를 A 앞으로 이동하는 명령과 DIFF-09의 keyless 순서 대응을 유지한다.
+- **검증 경계:** 계획의 참조 유효성과 입력·실제 DOM 보존을 확인한다. 이동만 있는 다섯 사례와 네 형제의 24개 순열은 실제 `orderChanges()`로 정렬 후 move를 표준 DOM 연산으로 적용해 목표 순서·객체 동일성을 확인한다. 제품 Patch 검증은 아니다. 이동·삽입 및 이동·삭제의 실제 Patch 연계 2개는 `it.todo`다.
+- **최초 실행:** 신규 실행 테스트 41개 모두 `collectMoveChanges: 미구현`으로 실패, 2개 보류. 타입 검사 통과. 이동 계획만 구현하더라도 정렬 미구현으로 최종 순서 검증은 완료되지 않는다.
+
+### 알고리즘 후보 — 제안, 제품 코드 미반영
+
+1. 기존 `matches`를 재사용해 삽입·제거를 제외한 이전 형제 순서와 목표 기존 형제 순서를 준비한다. 양쪽 순서는 동일한 이전 VNode 객체로 표현해 참조로 비교할 수 있다.
+2. 이전 순서의 작업용 복사본을 목표와 왼쪽부터 비교한다. 현재 위치와 목표 노드가 다르면 목표 노드를 해당 위치로 옮기고 이동 대상으로 기록한다. 실제 DOM·입력은 변경하지 않는다. 최소 이동 횟수는 보장하지 않는다.
+3. 각 이동 대상은 이전 VNode를 `target`, 다음 부모를 `parent`, 전체 다음 자식 목록의 바로 오른쪽 형제를 `before`로 지정한다. 마지막은 null이다. 작업 목록에서 옮긴 위치와 실제 명령의 기준 형제를 혼동하지 않는다.
+4. 정렬 단계에서 같은 부모의 삽입·이동을 목표 순서 오른쪽부터 적용하면 기준 형제가 먼저 준비된다. 새 기준 형제의 생성은 사용보다 먼저, 교체는 해당 새 노드를 사용하는 이동보다 먼저 처리해야 한다. 이 순서는 정렬 구현 논의·실제 테스트로 별도 검증해야 한다.
+
+- **분리 후보:** 대응된 형제 순서 준비 → 작업 목록에서 이동 대상 선택 → 다음 트리 참조를 가진 명령 생성. 필요하면 같은 파일의 비공개 함수로 나눈다. 제안 단계에서 새 자료구조나 공용 API를 확정하지 않는다.
+- **독립 모형 실험:** 이전 abcd에 대해 abcdx 부분집합의 모든 목표 순서 326개를 문자열 목록으로 확인했다. 제거 후 삽입·이동을 목표 오른쪽부터 적용하면 후보 계획으로 목표에 도달했다. 제품 VNode·정렬·Patch를 실행한 검증이 아니며 실제 테스트의 실패를 대신하지 않는다.
+
+## 19. 이동 계획 하위 함수 구현
+
+- **사용자 승인:** 1레벨 흐름에 이어 세 하위 함수를 구현한다. `orderChanges()`와 Patch는 구현하지 않는다.
+- `collectMatchedChildren()`는 이미 계산된 대응 결과에서 이전 노드 참조를 다음 순서로 모으고, 대응된 노드만 이전 목록에 남겨 두 순서를 만든다. 삽입·제거로 밀린 인덱스를 이동으로 오판하지 않는다.
+- `findMovedChildren()`는 이전 순서의 복사본을 목표와 왼쪽부터 맞추며 이동 대상을 기록한다. 입력은 수정하지 않고 최소 이동 횟수는 보장하지 않는다.
+- `createMoveCommands()`는 기존 대응 결과로 이전 노드에서 다음 노드를 찾고, 다음 전체 형제 목록의 오른쪽 노드를 기준으로 move를 만든다. 새로운 형제는 아직 dom이 null이어도 VNode 참조를 사용한다. 최종 실행 순서는 정렬의 책임이다.
+- **선택 기록:** 같은 파일의 비공개 함수와 기존 타입을 재사용했다. 대응 자료에 노드가 없거나 다음 위치가 없는 내부 불일치는 명령을 조용히 누락하지 않고 오류로 알린다. 정상 입력 계약과 기존 테스트 기대 결과는 변경하지 않는다.
+- **검증:** 타입 검사와 `git diff --check` 통과. 이동 테스트 12개 통과, 29개는 `orderChanges: 미구현`으로 실패, Patch 연계 2개 보류. 전체 테스트는 63개 통과·46개 실패·2개 건너뜀·7개 보류이며 실행된 실패 원인은 정렬 미구현뿐이다.
+- 이동 계획의 사례별 참조·입력 보존은 통과했지만, 24개 전체 순열과 실제 DOM 최종 순서 검증은 정렬 미구현 때문에 아직 완료되지 않았다. 테스트를 수정하거나 정렬을 대체해 통과시키지 않았다.
