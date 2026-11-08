@@ -1,5 +1,19 @@
 # Phase 1 결정 기록
 
+## P1-SNAP-01 — Snapshot 데이터 변환과 검증 범위
+
+- **상태:** 구현·단위 검증 완료 — 실제 Diff·Patch 통합은 별도
+- **날짜:** 2026-11-07
+- **합의:** 기존 VNode·VRoot·propertySchema 계약으로 SNAP-01~06 테스트 함수 6개를 먼저 작성하고 실패 확인 후 구현한다. SNAP-06의 입력 4종은 한 테스트 안에서 각각 검증한다. HTML-03도 같은 실제 Snapshot 구현으로 재검증한다. INIT mock과 실제 Diff·Patch 연결은 이번에 변경하지 않는다.
+- **명세 확인:** SNAP-01은 `<div class="box">A<span>B</span>C</div>` 구조·종류·속성·자식 순서, SNAP-02는 `<div>A<!-- 메모 --><span>B</span></div>`의 주석 제외, SNAP-03은 `<p class="a">A</p>` 원본 DOM·편집기 수정 후 복사 데이터 유지, SNAP-04는 `<p id="title" class="a" data-extra="x" title="설명">A</p>` 속성 복사와 별도 key 보존, SNAP-05는 이전 `<p>A</p>`의 데이터·참조 유지와 다음 `<p>B</p><span>C</span>` 전체의 `dom: null`, SNAP-06은 명세의 INPUT 2종·TEXTAREA·SELECT/OPTION properties를 검증한다.
+- **실행 경계:** 실제 `parseHTML()` → `createSnapshot()`까지만 실행한다. Snapshot 반환 직후 검증하고 SNAP-03은 그 반환 데이터에 원본 DOM·편집기 변경이 반영되지 않는지 확인한다. 기존 실제 화면·History 유지 조건은 필요한 사전 상태와 승인된 History mock으로 확인한다.
+- **구현:** `src/vdom/create.ts`에 `createSnapshot`, `snapshotNode`, `readAttributes`, `readProperties`를 추가했다. 지원하는 요소·텍스트를 재귀 복사하고 주석은 제외한다. 요소 tagName은 대문자로 저장하며 루트와 모든 노드의 `dom`은 null이다. 속성은 key를 포함해 새 이름·값 객체로 복사하고, properties는 기존 스키마의 현재 값만 읽는다.
+- **구현 선택·이유:** 루트와 요소의 자식 순회를 내부 `snapshotChildren()`으로 공유해 같은 순서·주석 제외 규칙을 적용한다. 노드 종류는 `nodeType`으로 확인해 파싱용 문서에서 나온 노드도 처리한다. 일반 속성을 열거하고 스키마의 프로퍼티만 조회해 속성별 분기나 실제 DOM 변경을 추가하지 않는다. 기존 공개 타입·함수 계약은 유지한다.
+- **실패 확인:** 테스트를 먼저 작성해 6개 모두 `createSnapshot is not a function`으로 대상 호출에서 중단되는 것을 확인했다. 이는 assertion 실패와 구분한다. 실제 구현 후 동일한 기대 결과를 유지하며 6개 모두 통과했다.
+- **최종 검증:** `npm run check`에서 타입 검사와 전체 13개 테스트가 통과했다. SNAP은 테스트 함수 6개이며 SNAP-06 안에서 입력 4종을 검증한다. 보류했던 HTML-03도 빈 VRoot·기존 화면·현재 VDOM·History mock 유지 assertion까지 통과했다. `npm run build`도 통과했다.
+- **검증 한계:** 실제 Snapshot 구현을 검증했다. Snapshot 테스트의 History 유지 조건은 승인된 mock으로 확인하며 실제 History 알고리즘은 HIST 범위다. INIT은 계속 mock 기반이고 `main.ts`의 실제 의존 함수 조립은 미완료 상태다.
+- **문서 범위:** 결정 기록·테스트 진행표만 갱신한다. 수정 제한된 PRD·함수 흐름·테스트 케이스·인터페이스 문서는 변경하지 않는다.
+
 ## P1-HTML-01 — HTML 테스트 범위와 편집기 읽기 계약
 
 - **상태:** accepted — 사용자 합의. 테스트 결과는 별도 기록한다.
@@ -7,13 +21,13 @@
 - **결정:** `readEditorHTML(editor: HTMLTextAreaElement): string`으로 편집기 요소를 인자로 전달한다. HTML-01·02는 테스트를 먼저 작성해 실패를 확인한 뒤 구현한다. HTML-03은 테스트만 먼저 작성하고 Snapshot 구현 후 통과를 확인한다. HTML 구현 당시에는 INIT의 연결 대기 주석을 유지했으며, 이후 INIT 변경은 P1-INIT-TDD-01을 따른다.
 - **명세 확인:** HTML-01은 `readEditorHTML(editor)` 단독으로 `<div>\n  <p>A</p>\n</div>`의 실제 줄바꿈·들여쓰기를 그대로 읽는다. HTML-02는 `parseHTML()` 단독으로 `<section class="box"><p>A</p></section><span>B</span>`를 파싱하고 기존 `<p>기존</p>` 화면을 유지한다. HTML-03은 기존 실제 영역·현재 VDOM에 자식이 있는 상태에서 `parseHTML("")` → `createSnapshot()`까지만 실행하고 `{ childNodes: [], dom: null }`과 기존 화면·상태 유지를 검증한다.
 - **검증 시점:** 각 대상 함수 반환 직후. 대상 함수 실행 중에는 Diff·Patch·렌더링·이력 저장을 호출하지 않는다. History 유지 조건 검증을 위한 사전 상태 준비에서는 아래 mock 초기화를 수행한다.
-- **구현:** `src/app/editor.ts`는 `editor.value`를 그대로 반환한다. `src/vdom/create.ts`의 `parseHTML()`은 화면에 붙이지 않은 `<template>`에 HTML을 파싱하고 `content`를 반환한다. `createSnapshot()`은 이번에 구현하거나 대역으로 대체하지 않는다.
+- **구현:** `src/app/editor.ts`는 `editor.value`를 그대로 반환한다. `src/vdom/create.ts`의 `parseHTML()`은 화면에 붙이지 않은 `<template>`에 HTML을 파싱하고 `content`를 반환한다. HTML 구현 당시 보류한 `createSnapshot()`은 이후 P1-SNAP-01에서 실제 구현했다.
 - **실패 확인:** HTML-01은 구현 파일 부재로 테스트 수집이 중단됐고, HTML-02는 `parseHTML is not a function`으로 호출 시 중단됐다. 둘 다 assertion 실패가 아닌 미구현 오류임을 구분한다. 구현 후 두 테스트의 assertion은 통과했다.
-- **보류:** HTML-03은 `createSnapshot(parseHTML(''))` 호출에서 `createSnapshot is not a function`으로 중단되어 assertion에 도달하지 못한다. 테스트가 존재하지 않는 named export를 참조하므로 타입 검사에도 TS2305가 남는다. Snapshot 구현 시 같은 테스트로 다시 확인하며, 통과를 위해 테스트를 skip하거나 기대값을 바꾸지 않는다.
+- **보류 해소:** HTML-03은 최초에 `createSnapshot(parseHTML(''))` 호출에서 중단됐으나, P1-SNAP-01의 실제 Snapshot 구현 후 기존 assertion을 그대로 실행해 통과했다. 미구현 export 참조로 발생하던 TS2305도 해소됐다. skip이나 기대값 변경은 하지 않았다.
 - **History mock 검증:** 사용자 요청에 따라 `tests/helpers/html.context.ts`에서 실제 `init()`에 History mock과 초기화용 Snapshot·Diff·Patch 대역을 주입해 `<p>기존</p>` 사전 상태를 준비한다. 준비 단계의 저장 호출 1회를 기준으로, 대상 함수 실행 후 `set` 호출 기록이 추가·변경되지 않고 `move`가 호출되지 않았는지 확인한다. mock의 `get()`이 반환하는 현재 VDOM의 데이터·DOM 참조 유지도 검사한다.
 - **선택 이유:** 앱과 연결되지 않은 별도 mock을 확인하는 대신, 초기화에 실제 전달한 History mock을 사용한다. mock은 조회값과 호출 기록만 제공하며 이력 복사·저장 배열·위치 이동 알고리즘을 구현하지 않는다. 이력 자체의 정확성은 HIST 범위로 남긴다.
-- **검증 한계:** HTML-01·02는 기존 화면·편집기 유지와 History mock의 추가 저장·이동 없음, 현재 VDOM 유지를 검증했다. HTML-03에도 같은 검증을 추가했지만 Snapshot 미구현으로 대상 호출에서 중단되어 assertion은 아직 실행되지 않았다. 실제 History 모듈의 데이터 보존·복원 검증은 HIST 및 통합 테스트에서 수행한다.
-- **최종 실행:** `npm test`에서 HTML은 2개 통과·1개 실패, HTML 구현 당시 전체 결과는 7개 중 4개 통과·3개 실패였다. 이후 INIT mock 전환 결과는 P1-INIT-TDD-01과 테스트 진행표를 따른다. `npm run typecheck`의 오류는 HTML-03의 미구현 `createSnapshot` 참조(TS2305) 1건이다.
+- **검증 한계:** HTML-01~03 모두 기존 화면·현재 VDOM·History mock 유지 assertion이 통과했다. 실제 History 모듈의 데이터 보존·복원 검증은 HIST 및 통합 테스트에서 수행한다.
+- **최종 실행:** Snapshot 구현 후 HTML 3개 모두 통과했고, 전체 13개 테스트와 타입 검사도 통과했다. 결과는 P1-SNAP-01과 테스트 진행표를 따른다.
 - **영향 범위:** 편집기 읽기, HTML 파싱, HTML-03 테스트 및 관련 명세·진행표. `writeEditorHTML()` 계약은 이번에 확정하지 않는다.
 
 ## P1-INIT-TDD-01 — INIT 함수 분리와 mock 기반 단위 검증

@@ -10,13 +10,13 @@
 | 2. 초기화 (INIT) | **INIT-02** | 초기 이력 준비 후 각 버튼이 Patch·이력 이동 경로를 한 번씩 실행한다. | O | mock 기반 단위 검증 1개 통과. 클릭 전 첫 저장, 실제 이벤트 연결을 통한 mock Patch 핸들러 1회·추가 저장 1회, 뒤로 -1·앞으로 1 핸들러 호출과 추가 저장 없음을 확인했다. 실제 핸들러의 변경·복원 동작은 통합 검증 대기다. |
 | 3. 코드 읽기/파싱 (HTML) | **HTML-01** | 편집기 UI 대신 입력한 HTML 원문을 변경 없이 읽는다. | O | 원문·줄바꿈·들여쓰기와 편집기·기존 DOM 유지 검증 통과. 실제 init에 연결한 History mock의 저장 호출 기록 유지·이동 호출 없음과 현재 VDOM 데이터·참조 유지도 통과. 실제 이력 알고리즘은 HIST에서 검증한다. |
 | 3. 코드 읽기/파싱 (HTML) | **HTML-02** | 중첩 HTML을 임시 DOM으로 파싱하고 실제 화면은 유지한다. | O | 구조·속성·텍스트·순서·임시 DOM 분리·기존 화면 유지 검증 통과. 실제 init에 연결한 History mock의 추가 저장·이동 없음과 현재 VDOM 유지도 통과. 실제 이력 알고리즘은 HIST에서 검증한다. |
-| 3. 코드 읽기/파싱 (HTML) | **HTML-03** | 빈 HTML을 자식 없는 VDOM으로 변환하고 실제 화면은 아직 유지한다. | X | 빈 VRoot·기존 DOM·현재 VDOM 유지와 History mock의 추가 저장·이동 없음 검증을 작성했다. 다만 createSnapshot 미구현으로 대상 호출에서 중단되어 assertion에는 도달하지 못했다. SNAP 구현 후 통과 확인을 보류한다. |
-| 4. 스냅샷 (SNAP) | **SNAP-01** | 요소·텍스트의 종류·태그·속성과 중첩된 자식 순서를 보존한다. | | 테스트 코드 미작성·미실행. |
-| 4. 스냅샷 (SNAP) | **SNAP-02** | 주석 노드만 제외하고 이웃 텍스트·요소의 순서를 유지한다. | | 테스트 코드 미작성·미실행. |
-| 4. 스냅샷 (SNAP) | **SNAP-03** | 원본 임시 DOM·편집기 수정이 이미 만든 VDOM 데이터를 바꾸지 않는다. | | 테스트 코드 미작성·미실행. |
-| 4. 스냅샷 (SNAP) | **SNAP-04** | 새로운 data 속성을 포함한 일반 속성의 이름·값을 수집한다. | | 테스트 코드 미작성·미실행. |
-| 4. 스냅샷 (SNAP) | **SNAP-05** | 다음 VDOM은 기존·새 노드 구분 없이 Patch 전까지 실제 DOM 참조가 없다. | | 테스트 코드 미작성·미실행. |
-| 4. 스냅샷 (SNAP) | **SNAP-06** | HTML에서 입력값·체크·선택 상태를 properties로 수집한다. | | 테스트 코드 미작성·미실행. |
+| 3. 코드 읽기/파싱 (HTML) | **HTML-03** | 빈 HTML을 자식 없는 VDOM으로 변환하고 실제 화면은 아직 유지한다. | O | 실제 createSnapshot 구현 후 기존 테스트 통과. 빈 VRoot·기존 DOM·현재 VDOM 유지와 History mock의 추가 저장·이동 없음까지 확인했다. |
+| 4. 스냅샷 (SNAP) | **SNAP-01** | 요소·텍스트의 종류·태그·속성과 중첩된 자식 순서를 보존한다. | O | 지정 입력의 전체 VRoot·VNode 데이터와 자식 순서, 임시 노드 미삽입, 기존 실제 DOM·History mock 유지 검증 통과. |
+| 4. 스냅샷 (SNAP) | **SNAP-02** | 주석 노드만 제외하고 이웃 텍스트·요소의 순서를 유지한다. | O | 주석을 제외한 A·span·B 순서와 하위 구조 유지, 원본 주석 미삭제, 전체 dom null 검증 통과. |
+| 4. 스냅샷 (SNAP) | **SNAP-03** | 원본 임시 DOM·편집기 수정이 이미 만든 VDOM 데이터를 바꾸지 않는다. | O | 원본 class·텍스트·자식 구조·편집기 수정 후에도 Snapshot의 원래 데이터와 dom null 유지 검증 통과. History mock도 유지한다. |
+| 4. 스냅샷 (SNAP) | **SNAP-04** | 새로운 data 속성을 포함한 일반 속성의 이름·값을 수집한다. | O | 지정 속성 4개와 별도 key 입력의 속성 복사, 원본 속성·실제 DOM·History mock 유지 검증 통과. |
+| 4. 스냅샷 (SNAP) | **SNAP-05** | 다음 VDOM은 기존·새 노드 구분 없이 Patch 전까지 실제 DOM 참조가 없다. | O | 다음 p·span·하위 텍스트·VRoot 전체 dom null, 이전 A 데이터·실제 DOM 참조 유지 검증 통과. |
+| 4. 스냅샷 (SNAP) | **SNAP-06** | HTML에서 입력값·체크·선택 상태를 properties로 수집한다. | O | 테스트 함수 1개에서 입력 4종과 OPTION별 selected 상태를 검증했다. 속성·properties 분리, indeterminate false와 실제 화면 입력값을 읽지 않는 조건도 통과. |
 | 5. Diff (DIFF) | **DIFF-01** | 같은 HTML을 다시 파싱해도 변경 명령은 없고 입력 VDOM·DOM은 유지된다. | | 테스트 코드 미작성·미실행. |
 | 5. Diff (DIFF) | **DIFF-02** | 텍스트만 바뀌면 요소 교체 없이 텍스트 update 명령을 반환한다. | | 테스트 코드 미작성·미실행. |
 | 5. Diff (DIFF) | **DIFF-03** | 속성 추가·변경·삭제를 update로 계산하고 속성 나열 순서는 무시한다. | | 테스트 코드 미작성·미실행. |
@@ -54,4 +54,6 @@
 
 현재 실행 기록: 2026-11-07, `npm test`. [app.init.test.ts](../tests/unit/app.init.test.ts)의 INIT 테스트 함수는 3개이며 mock 기반 단위 테스트로 모두 통과한다. INIT-01을 두 함수로 나눠 작성했으므로 명세 ID 수와 테스트 함수 수가 다르다. 별도 기존 `createEmptyVDOM` 테스트 1개는 통과했으며 이 표의 명세 케이스 수에 포함하지 않는다. 실제 의존 함수 주입 위치와 검증 한계는 [p1_decisions.md](p1_decisions.md)의 P1-INIT-TDD-01을 따른다.
 
-HTML 실행 기록: [HTML-01](../tests/unit/editor.read.test.ts), [HTML-02](../tests/unit/html.parse.test.ts), [HTML-03](../tests/unit/html.empty.test.ts)에 각 테스트 함수 1개를 작성했다. HTML은 2개 통과·1개 실패이며, 전체 실행은 7개 중 6개 통과·1개 실패다. `npm run typecheck`는 HTML-03의 미구현 `createSnapshot` export 참조(TS2305)로 실패한다. HTML-03의 assertion과 실제 History 연계 유지 조건은 아직 검증 완료로 취급하지 않는다.
+HTML 실행 기록: [HTML-01](../tests/unit/editor.read.test.ts), [HTML-02](../tests/unit/html.parse.test.ts), [HTML-03](../tests/unit/html.empty.test.ts)에 각 테스트 함수 1개를 작성했다. Snapshot 구현 후 HTML 3개 모두 통과했다. History 유지 조건은 mock 기준이며 실제 이력 알고리즘은 HIST에서 검증한다.
+
+Snapshot 실행 기록: [vdom.snapshot.test.ts](../tests/unit/vdom.snapshot.test.ts)에 SNAP-01~06 테스트 함수 6개를 작성해 모두 통과했다. SNAP-06의 입력 유형 4종은 한 테스트 안에서 각각 확인한다. 현재 전체는 INIT 3개 + HTML 3개 + SNAP 6개 + 기존 빈 루트 1개로 총 13개이며 모두 통과한다. `npm run check`와 `npm run build`도 통과했다. 실제 앱의 의존 함수 연결과 통합 테스트는 별도다.
