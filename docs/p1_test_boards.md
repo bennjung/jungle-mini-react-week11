@@ -7,7 +7,7 @@
 | 테스트 카테고리 | 테스트 코드 | 테스트 내용 | 테스트 결과(O,X) | 원인 분석 |
 | --- | --- | --- | --- | --- |
 | 2. 초기화 (INIT) | **INIT-01** | 빈 실제 영역에 샘플을 렌더링하고 편집기·첫 이력·DOM 참조를 준비한다. | O | mock 기반 단위 검증과 `tests/integration/app-flow.test.ts`의 실제 의존성 검증 모두 통과. 샘플 1회 렌더링, 편집기 원문, 첫 이력, 전체 참조 연결을 확인했다. |
-| 2. 초기화 (INIT) | **INIT-02** | 초기 이력 준비 후 각 버튼이 Patch·이력 이동 경로를 한 번씩 실행한다. | O | 실제 init과 버튼 클릭으로 Patch·뒤로·앞으로 경로, 이력 추가·이동 횟수를 확인했다. |
+| 2. 초기화 (INIT) | **INIT-02** | 초기 이력 준비 후 각 버튼이 Patch·이력 이동 경로를 한 번씩 실행한다. | O | 실제 init과 버튼 클릭으로 Patch·뒤로·앞으로 경로, 이력 추가·이동 횟수를 확인했다. 프로필만 수정한 Patch에서 폼 하위 DOM 동일성과 value·checked·selected 유지도 확인했다. |
 | 3. 코드 읽기/파싱 (HTML) | **HTML-01** | 편집기 UI 대신 입력한 HTML 원문을 변경 없이 읽는다. | O | 원문·줄바꿈·들여쓰기와 실제 영역·현재 VDOM·History mock 유지 검증 통과. |
 | 3. 코드 읽기/파싱 (HTML) | **HTML-02** | 중첩 HTML을 임시 DOM으로 파싱하고 실제 화면은 유지한다. | O | 구조·속성·텍스트·순서·임시 DOM 분리와 기존 화면 유지 검증 통과. |
 | 3. 코드 읽기/파싱 (HTML) | **HTML-03** | 빈 HTML을 자식 없는 VDOM으로 변환하고 실제 화면은 아직 유지한다. | O | 빈 VRoot, 기존 실제 DOM·현재 VDOM·History mock 유지 검증 통과. |
@@ -54,7 +54,7 @@
 | 8. 전체 Patch (FLOW) | **FLOW-04** | Patch에서 오류가 발생하면 이력을 추가하지 않고 현재 이력 위치를 유지한다. | O | applyPatch 오류 시 set 미호출, move(0), entry 유지 검증 통과. |
 | 8. 전체 Patch (FLOW) | **FLOW-05** | applyPatch 실패 시 실제 영역만 현재 이력으로 복원하고 편집기는 유지한다. | O | 부분 DOM 변경 후 실패에서 full restore, editor 유지, move(0), 재시도 중복 없음 확인. |
 | 9. History (HIST) | **HIST-01** | 현재 VDOM의 DOM 참조와 저장 데이터·HTML 원문을 분리하고 과거 상태를 보존한다. | O | get=live, 저장 entry=dom null 복사본·HTML, 원본 변경에도 entry 불변 확인. |
-| 9. History (HIST) | **HIST-02** | 뒤로·앞으로 이동하면 화면·HTML 원문을 복원하고 실제 DOM 참조를 재연결한다. | O | 실제 handler와 restore로 화면·원문·전체 참조·이력 데이터 유지 확인. |
+| 9. History (HIST) | **HIST-02** | 뒤로·앞으로 이동하면 화면·HTML 원문을 복원하고 실제 DOM 참조를 재연결한다. | O | 실제 handler와 restore로 화면·원문·전체 참조·이력 데이터 유지 확인. 폼 value·checked·selected의 Patch 반영과 뒤로·앞으로 복원까지 확인했다. |
 | 9. History (HIST) | **HIST-03** | 처음·마지막 이력 밖으로 이동하면 화면·코드·현재 위치를 유지한다. | O | History 단위와 실제 버튼 경계 no-op 검증 통과. |
 | 9. History (HIST) | **HIST-04** | 과거로 돌아가 새 상태를 저장하면 미래 이력만 제거한다. | O | A·B·D 저장과 C 미래 이력 제거를 확인했다. |
 | 9. History (HIST) | **HIST-05** | 삭제·교체 전 상태를 복원한 뒤 현재 화면에 재생성된 노드를 수정한다. | O | restore 후 새 p가 재생성되고 후속 Patch가 화면의 그 p를 수정함을 확인했다. |
@@ -70,11 +70,12 @@
 | 12. 통합 (IT) | **IT-07** | 첫 Patch에서 교체한 노드를 다음 Patch에서 재사용한다. | O | replace로 만든 p·텍스트를 두 번째 Patch가 기존 DOM으로 수정함을 확인. |
 | 12. 통합 (IT) | **IT-08** | 변경 없음에서는 빈 명령을 반환하고 Patch를 생략한다. | O | 빈 Diff, DOM 불변, 현재 VDOM 유지 확인. |
 
-현재 실행 기록: 2026-11-08, `npm run check`.
+현재 실행 기록: 2026-11-09, `npm run check`.
 
 - 테스트 파일 22개, 테스트 193개 통과, skip 0개, todo 0개.
 - `npm run typecheck`, `npm run build` 통과.
 - 통합 테스트 위치: [handlers.test.ts](../tests/integration/handlers.test.ts), [app-flow.test.ts](../tests/integration/app-flow.test.ts), [vdom-snapshot-diff-patch.test.ts](../tests/integration/vdom-snapshot-diff-patch.test.ts).
 - 실제 브라우저 확인: 샘플 초기 렌더링 1회, 편집기 수정→Patch, 뒤로·앞으로 복원, 복원 후 연속 Patch, Tab 2칸 입력, page/console error 0건.
+- 2026-11-09 추가 확인: 폼 value·checked·selected 초기값, 프로필만 수정한 Patch에서 폼 하위 DOM 동일성·상태 유지, 폼 값 Patch와 뒤로·앞으로 복원. page error 0건, favicon 404 외 console error 없음.
 - History 상한과 퇴거는 P1-HISTORY-STATE-01, key 정책은 P1-CONF-03을 따른다.
 - 복원 자체 실패 UI·재시작 정책과 `history.set()` 실패의 DOM 복구는 여전히 미확정 범위다.

@@ -115,8 +115,45 @@ function expectDomUnchanged(actualRoot: Element, snapshot: DomSnapshot): void {
   });
 }
 
+interface FormState {
+  nickname: string;
+  alerts: boolean;
+  bio: string;
+  theme: string;
+  stack: string[];
+}
+
+function readFormState(root: ParentNode): FormState {
+  return {
+    nickname: requireElement<HTMLInputElement>(root, '#nickname').value,
+    alerts: requireElement<HTMLInputElement>(root, 'input[name="alerts"]').checked,
+    bio: requireElement<HTMLTextAreaElement>(root, '#bio').value,
+    theme: requireElement<HTMLSelectElement>(root, '#theme').value,
+    stack: Array.from(
+      requireElement<HTMLSelectElement>(root, '#stack').selectedOptions,
+      (option) => option.value
+    )
+  };
+}
+
 const SAMPLE_TEXT = '이름: 홍길동';
 const MODIFIED_TEXT = '이름: 김철수';
+
+const INITIAL_FORM_STATE: FormState = {
+  nickname: '게스트',
+  alerts: true,
+  bio: '안녕하세요',
+  theme: 'dark',
+  stack: ['ts', 'svelte']
+};
+
+const MODIFIED_FORM_STATE: FormState = {
+  nickname: '편집자',
+  alerts: false,
+  bio: '반갑습니다',
+  theme: 'light',
+  stack: ['svelte', 'rust']
+};
 
 function modifySampleHTML(sampleHTML: string): string {
   const modified = sampleHTML.replace(SAMPLE_TEXT, MODIFIED_TEXT);
@@ -124,6 +161,26 @@ function modifySampleHTML(sampleHTML: string): string {
     throw new Error('샘플에서 수정 대상 텍스트를 찾지 못했습니다.');
   }
   return modified;
+}
+
+function replaceOnce(source: string, search: string, replacement: string): string {
+  const next = source.replace(search, replacement);
+  if (next === source) {
+    throw new Error(`샘플에서 찾지 못했습니다: ${search}`);
+  }
+  return next;
+}
+
+// value·checked·selected가 함께 바뀌는 폼 Patch를 만든다.
+function modifyFormHTML(html: string): string {
+  let next = replaceOnce(html, 'value="게스트"', 'value="편집자"');
+  next = replaceOnce(next, 'name="alerts" checked', 'name="alerts"');
+  next = replaceOnce(next, '>안녕하세요</textarea>', '>반갑습니다</textarea>');
+  next = replaceOnce(next, '<option value="light">', '<option value="light" selected>');
+  next = replaceOnce(next, '<option value="dark" selected>', '<option value="dark">');
+  next = replaceOnce(next, '<option value="ts" selected>', '<option value="ts">');
+  next = replaceOnce(next, '<option value="rust">', '<option value="rust" selected>');
+  return next;
 }
 
 afterEach(() => {
@@ -180,12 +237,23 @@ describe('app-flow — 실제 의존성 앱 조립', () => {
     expect(history.peek(1)).toBeNull();
     expectFullyLinked(history.get(), pageRoot);
 
+    const sampleRoot = requireElement<HTMLElement>(pageRoot, '#sample-app');
+    const heading = requireElement<HTMLHeadingElement>(pageRoot, '#sample-app h1');
+    const headingText = heading.firstChild;
     const profileParagraph = requireElement<HTMLParagraphElement>(
       pageRoot,
       '#sample-app section.profile p'
     );
     const profileText = profileParagraph.firstChild;
     expect(profileText?.nodeValue).toBe(SAMPLE_TEXT);
+
+    const settings = requireElement<HTMLElement>(sampleRoot, 'section.settings');
+    const nickname = requireElement<HTMLInputElement>(settings, '#nickname');
+    const alerts = requireElement<HTMLInputElement>(settings, 'input[name="alerts"]');
+    const bio = requireElement<HTMLTextAreaElement>(settings, '#bio');
+    const theme = requireElement<HTMLSelectElement>(settings, '#theme');
+    const stack = requireElement<HTMLSelectElement>(settings, '#stack');
+    expect(readFormState(pageRoot)).toEqual(INITIAL_FORM_STATE);
 
     // 편집기 수정 → 실제 Patch 버튼 클릭 → 실제 DOM 반영과 이력 추가.
     const modifiedHTML = modifySampleHTML(sampleHTML);
@@ -196,6 +264,23 @@ describe('app-flow — 실제 의존성 앱 조립', () => {
     expect(pageRoot.textContent).toContain(MODIFIED_TEXT);
     expect(pageRoot.textContent).not.toContain(SAMPLE_TEXT);
     expect(pageRoot.querySelectorAll('#sample-app')).toHaveLength(1);
+
+    // 변경되지 않아야 하는 조상·형제 노드는 같은 실제 DOM 객체를 유지한다.
+    expect(requireElement(pageRoot, '#sample-app')).toBe(sampleRoot);
+    expect(requireElement(pageRoot, '#sample-app h1')).toBe(heading);
+    expect(heading.firstChild).toBe(headingText);
+    expect(heading.textContent).toBe('Mini React Test');
+
+    // 프로필만 바꾼 Patch는 폼 하위 DOM과 입력 상태를 건드리지 않는다.
+    expect(requireElement(pageRoot, '#sample-app section.settings')).toBe(settings);
+    expect(requireElement(pageRoot, '#nickname')).toBe(nickname);
+    expect(requireElement(pageRoot, 'input[name="alerts"]')).toBe(alerts);
+    expect(requireElement(pageRoot, '#bio')).toBe(bio);
+    expect(requireElement(pageRoot, '#theme')).toBe(theme);
+    expect(requireElement(pageRoot, '#stack')).toBe(stack);
+    expect(readFormState(pageRoot)).toEqual(INITIAL_FORM_STATE);
+
+    // update만 되어야 하는 p와 텍스트 노드도 객체는 그대로이고 값만 바뀐다.
     expect(requireElement(pageRoot, '#sample-app section.profile p')).toBe(profileParagraph);
     expect(profileParagraph.firstChild).toBe(profileText);
     expect(profileText?.nodeValue).toBe(MODIFIED_TEXT);
@@ -212,10 +297,11 @@ describe('app-flow — 실제 의존성 앱 조립', () => {
     const { elements, history } = startApp();
     const actualRoot = elements.actualRoot;
 
-    const modifiedHTML = modifySampleHTML(sampleHTML);
+    const modifiedHTML = modifyFormHTML(modifySampleHTML(sampleHTML));
     elements.editor.value = modifiedHTML;
     elements.patchButton.click();
     expect(actualRoot.textContent).toContain(MODIFIED_TEXT);
+    expect(readFormState(actualRoot)).toEqual(MODIFIED_FORM_STATE);
 
     // 뒤로 → 초기 화면과 편집기 원문을 함께 복원한다.
     elements.backButton.click();
@@ -235,6 +321,7 @@ describe('app-flow — 실제 의존성 앱 조립', () => {
       '#sample-app section.profile p'
     );
     expect(restoredParagraph.firstChild?.nodeValue).toBe(SAMPLE_TEXT);
+    expect(readFormState(actualRoot)).toEqual(INITIAL_FORM_STATE);
 
     // 앞으로 → 수정 상태의 화면과 편집기 원문을 함께 복원한다.
     elements.forwardButton.click();
@@ -247,6 +334,7 @@ describe('app-flow — 실제 의존성 앱 조립', () => {
     expect(history.peek(0)?.html).toBe(modifiedHTML);
     expect(history.peek(1)).toBeNull();
     expectFullyLinked(history.get(), actualRoot);
+    expect(readFormState(actualRoot)).toEqual(MODIFIED_FORM_STATE);
   });
 
   it('HIST-03: 처음·마지막 경계에서 뒤로·앞으로 클릭은 아무것도 바꾸지 않는다', () => {
