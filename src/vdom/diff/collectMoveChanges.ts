@@ -31,20 +31,44 @@ function collectMatchedChildren(
   return { previousOrder, targetOrder };
 }
 
-/** 작업용 목록을 목표에 맞추며 이동할 이전 노드를 선택한다. 입력 순서는 변경하지 않는다. */
+/** 최장 증가 부분 수열의 노드는 유지하고 나머지만 이동한다. 시간 O(n²), 공간 O(n). */
 function findMovedChildren(previousOrder: VNode[], targetOrder: VNode[]): VNode[] {
-  const workingOrder = [...previousOrder];
-  const movedChildren: VNode[] = [];
+  const previousIndices = new Map(previousOrder.map((node, index) => [node, index]));
+  const positions = targetOrder.map((node) => {
+    const index = previousIndices.get(node);
+    if (index === undefined) throw new Error('대응된 이전 형제를 찾을 수 없습니다.');
+    return index;
+  });
+  const lengths = new Array<number>(positions.length).fill(1);
+  const predecessors = new Array<number>(positions.length).fill(-1);
+  let longestLength = 0;
+  let longestEnd = -1;
 
-  for (const [index, target] of targetOrder.entries()) {
-    if (workingOrder[index] === target) continue;
-    const currentIndex = workingOrder.indexOf(target);
-    if (currentIndex === -1) throw new Error('대응된 이전 형제를 찾을 수 없습니다.');
-    workingOrder.splice(currentIndex, 1);
-    workingOrder.splice(index, 0, target);
-    movedChildren.push(target);
+  for (const [index, position] of positions.entries()) {
+    let length = 1;
+    let predecessor = -1;
+    // 이전 위치가 더 작은 노드 뒤에 연결하면 상대 순서를 유지할 수 있다.
+    for (let candidate = 0; candidate < index; candidate++) {
+      if (positions[candidate]! < position && lengths[candidate]! + 1 > length) {
+        length = lengths[candidate]! + 1;
+        predecessor = candidate;
+      }
+    }
+    lengths[index] = length;
+    predecessors[index] = predecessor;
+    // 동률이면 목표의 뒤쪽에서 끝나는 수열을 유지한다. A B → B A에서는 A를 유지한다.
+    if (length >= longestLength) {
+      longestLength = length;
+      longestEnd = index;
+    }
   }
-  return movedChildren;
+
+  const keptIndices = new Set<number>();
+  for (let index = longestEnd; index !== -1; index = predecessors[index]!) {
+    keptIndices.add(index);
+  }
+  // 목표 순서로 반환해야 기존 명령 생성 단계가 오른쪽부터 이동을 배치할 수 있다.
+  return targetOrder.filter((_, index) => !keptIndices.has(index));
 }
 
 /** 이동 대상과 다음 부모·기준 형제 참조를 가진 move 명령을 만든다. DOM은 변경하지 않는다. */
