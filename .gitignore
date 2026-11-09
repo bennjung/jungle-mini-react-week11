@@ -13,3 +13,6 @@ coverage/
 
 # Logs
 *.log
+
+# Team wiki (separate git repository)
+wiki/
