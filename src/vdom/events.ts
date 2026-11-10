@@ -19,11 +19,6 @@ export function bindEvents(element: Element, events: VNodeEventMap): void {
   }
 }
 
-/** 노드에 연결된 handler map. 연결한 적이 없으면 undefined다. */
-export function getNodeEvents(node: Node): VNodeEventMap | undefined {
-  return nodeEvents.get(node);
-}
-
 /**
  * next 트리를 순회하며 실제 노드의 handler 연결을 최신 VNode에 맞춘다.
  * 새로 만든 노드는 renderNode()가 이미 연결·기록했으므로 비교 결과가 같음이 된다.

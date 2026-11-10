@@ -2,6 +2,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { h, startApp, useEffect, useMemo, useState } from '../../../src/component';
 import {
   buttonByText,
+  captureScheduledUpdates,
   createContainer,
   flushUpdates,
   resetBody,
@@ -390,12 +391,7 @@ describe('HOOK-07 Component 실행 밖에서 Hook을 호출하면 오류다', ()
 
 describe('HOOK-08 Hook 개수나 종류가 render 사이에 바뀌면 오류다', () => {
   it('개수가 줄어드는 render는 화면을 바꾸지 않는다', () => {
-    const scheduled: VoidFunction[] = [];
-    const queueMicrotaskSpy = vi
-      .spyOn(globalThis, 'queueMicrotask')
-      .mockImplementation((callback) => {
-        scheduled.push(callback);
-      });
+    const { scheduled, restore } = captureScheduledUpdates();
 
     try {
       function App() {
@@ -420,17 +416,12 @@ describe('HOOK-08 Hook 개수나 종류가 render 사이에 바뀌면 오류다'
       expect(container.contains(button)).toBe(true);
       expect(container.textContent).toBe('off');
     } finally {
-      queueMicrotaskSpy.mockRestore();
+      restore();
     }
   });
 
   it('개수가 늘어나는 render도 화면을 바꾸지 않는다', () => {
-    const scheduled: VoidFunction[] = [];
-    const queueMicrotaskSpy = vi
-      .spyOn(globalThis, 'queueMicrotask')
-      .mockImplementation((callback) => {
-        scheduled.push(callback);
-      });
+    const { scheduled, restore } = captureScheduledUpdates();
 
     try {
       function App() {
@@ -454,17 +445,12 @@ describe('HOOK-08 Hook 개수나 종류가 render 사이에 바뀌면 오류다'
       expect(container.contains(button)).toBe(true);
       expect(container.textContent).toBe('on');
     } finally {
-      queueMicrotaskSpy.mockRestore();
+      restore();
     }
   });
 
   it('같은 위치의 Hook 종류가 바뀌어도 화면을 바꾸지 않는다', () => {
-    const scheduled: VoidFunction[] = [];
-    const queueMicrotaskSpy = vi
-      .spyOn(globalThis, 'queueMicrotask')
-      .mockImplementation((callback) => {
-        scheduled.push(callback);
-      });
+    const { scheduled, restore } = captureScheduledUpdates();
 
     try {
       function App() {
@@ -491,7 +477,7 @@ describe('HOOK-08 Hook 개수나 종류가 render 사이에 바뀌면 오류다'
       expect(container.contains(button)).toBe(true);
       expect(container.textContent).toBe('switch');
     } finally {
-      queueMicrotaskSpy.mockRestore();
+      restore();
     }
   });
 });

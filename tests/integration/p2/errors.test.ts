@@ -5,6 +5,7 @@ import { applyPatch } from '../../../src/vdom/patch';
 import type { VNode } from '../../../src/vdom/types';
 import {
   buttonByText,
+  captureScheduledUpdates,
   createContainer,
   flushUpdates,
   resetBody
@@ -22,24 +23,6 @@ vi.mock('../../../src/vdom/events', async (importOriginal) => {
 
 const applyPatchMock = vi.mocked(applyPatch);
 const syncEventsMock = vi.mocked(syncEvents);
-
-/**
- * 예약된 갱신을 테스트가 직접 실행하기 위해 queueMicrotask를 가로챈다.
- * 예약 경로에서 던진 오류를 unhandled error로 흘리지 않고 expect().toThrow()로 잡기 위함이다.
- */
-function captureScheduledUpdates(): {
-  scheduled: VoidFunction[];
-  restore: () => void;
-} {
-  const scheduled: VoidFunction[] = [];
-  const spy = vi
-    .spyOn(globalThis, 'queueMicrotask')
-    .mockImplementation((callback) => {
-      scheduled.push(callback);
-    });
-
-  return { scheduled, restore: () => spy.mockRestore() };
-}
 
 beforeEach(() => {
   resetBody();
@@ -195,6 +178,58 @@ describe('ERR-02 applyPatch 실패는 마지막 성공 VDOM으로 복구하고 �
     expect(renders).toBe(3);
     expect(container.querySelector('span')!.textContent).toBe('B');
   });
+
+  it('effect setter로 시작한 갱신이 실패해도 이미 실행한 효과의 실행 기록을 잃지 않는다', async () => {
+    const failure = new Error('applyPatch failure');
+    const log: string[] = [];
+
+    function App() {
+      const [value, setValue] = useState('A');
+
+      useEffect(() => {
+        log.push('effect');
+
+        // mount 효과가 setter를 호출해 다음 갱신을 예약한다.
+        if (value === 'A') setValue('B');
+
+        return () => {
+          log.push(`cleanup:${value}`);
+        };
+      }, []);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, value),
+        h('button', { onClick: () => setValue('C') }, 'next')
+      );
+    }
+
+    const container = createContainer();
+    const { scheduled, restore } = captureScheduledUpdates();
+    try {
+      startApp(App, container);
+      expect(scheduled).toHaveLength(1);
+    } finally {
+      restore();
+    }
+
+    // effect 본문과 cleanup 반환까지 끝난 뒤, 예약된 갱신의 Patch가 실패한다.
+    expect(log).toEqual(['effect']);
+    applyPatchMock.mockImplementationOnce(() => {
+      throw failure;
+    });
+    expect(() => scheduled[0]!()).toThrow(failure);
+
+    expect(container.querySelector('span')!.textContent).toBe('A');
+
+    buttonByText(container, 'next').click();
+    await flushUpdates();
+
+    expect(container.querySelector('span')!.textContent).toBe('C');
+    // 실행 기록이 복원되면 effect를 다시 실행하지 않는다. 다시 실행되면 log가 늘어난다.
+    expect(log).toEqual(['effect']);
+  });
 });
 
 describe('syncEvents 오류는 DOM 반영 뒤 오류를 전파하고 effect를 실행하지 않는다', () => {
@@ -283,5 +318,57 @@ describe('effect 오류는 남은 effect를 실행하지 않는다', () => {
     // effect는 DOM 반영 뒤에 실행되므로 화면은 이미 갱신되어 있다.
     expect(container.querySelector('span')!.textContent).toBe('B');
     expect(log).toEqual(['first:A', 'second:A', 'first:B']);
+  });
+});
+
+describe('effect cleanup 오류는 남은 effect를 실행하지 않는다', () => {
+  it('첫 번째 cleanup 오류를 전파하고 새 본문과 두 번째 cleanup·본문은 실행하지 않는다', () => {
+    const failure = new Error('cleanup failure');
+    const log: string[] = [];
+
+    function App() {
+      const [value, setValue] = useState('A');
+
+      useEffect(() => {
+        log.push(`first-run:${value}`);
+        return () => {
+          log.push(`first-cleanup:${value}`);
+          if (value === 'A') throw failure;
+        };
+      }, [value]);
+
+      useEffect(() => {
+        log.push(`second-run:${value}`);
+        return () => {
+          log.push(`second-cleanup:${value}`);
+        };
+      }, [value]);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, value),
+        h('button', { onClick: () => setValue('B') }, 'next')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(log).toEqual(['first-run:A', 'second-run:A']);
+
+    const { scheduled, restore } = captureScheduledUpdates();
+    try {
+      buttonByText(container, 'next').click();
+
+      expect(scheduled).toHaveLength(1);
+      expect(() => scheduled[0]!()).toThrow(failure);
+    } finally {
+      restore();
+    }
+
+    // 효과는 DOM 반영 뒤에 실행되므로 화면은 새 값이다. cleanup 오류 뒤의 새 효과와
+    // 두 번째 효과의 cleanup·본문은 실행되지 않는다.
+    expect(container.querySelector('span')!.textContent).toBe('B');
+    expect(log).toEqual(['first-run:A', 'second-run:A', 'first-cleanup:A']);
   });
 });

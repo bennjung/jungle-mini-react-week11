@@ -11,7 +11,7 @@
 
 ## 1. 공개 경계와 전체 호출 지도
 
-공개 경계는 `src/component/index.ts` 하나다. `FunctionComponent`, `mount()`, `update()`는 공개하지 않는다.
+공개 경계는 `src/component/index.ts` 하나다. `h()`와 VNode 값 정규화 helper는 `src/component/h.ts`에 있고, `index.ts`가 `h`를 re-export한다. `FunctionComponent`, `mount()`, `update()`는 공개하지 않는다.
 
 | 함수 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- |
@@ -100,13 +100,14 @@ setter(next)
 ├─ applyStateUpdate(instance, slot, next)
 │  ├─ 함수형 updater면 previous 값을 기준으로 계산
 │  ├─ Object.is(previous, value) → 같으면 슬롯도 쓰지 않고 종료
-│  ├─ rememberHooksBeforeUpdate()          첫 setter만 슬롯 얕은 복사
+│  ├─ rememberStateValue(slot)             슬롯별 첫 쓰기의 이전 State 값 기록
 │  ├─ slot.value = value
 │  └─ scheduleUpdate(instance)
 │     ├─ updateScheduled가 true면 종료
 │     ├─ updateScheduled = true
 │     └─ queueMicrotask(callback)
 │        ├─ updateScheduled = false
+│        ├─ snapshotHooksBeforeUpdate()    render 전 전체 슬롯 얕은 복사
 │        └─ update()
 │           ├─ previousRoot = currentVDOM  null이면 오류
 │           ├─ try
@@ -133,13 +134,14 @@ setter(next)
 flowchart TD
     A["setter(next)"] --> B{"Object.is 이전 값과 같은가"}
     B -->|"같음"| B1["슬롯 쓰기·예약 없음"]
-    B -->|"다름"| C["첫 setter면 Hook 슬롯 복사"]
+    B -->|"다름"| C["rememberStateValue: State 이전 값 기록"]
     C --> D["slot.value = value"]
     D --> E{"updateScheduled"}
     E -->|"이미 예약됨"| E1["현재 배치에 합류"]
     E -->|"아니면"| F["queueMicrotask 예약"]
     F --> G["updateScheduled = false"]
-    G --> H["update()"]
+    G --> G2["snapshotHooksBeforeUpdate: 전체 슬롯 복사"]
+    G2 --> H["update()"]
     H --> I["renderComponent(update)"]
     I --> J["createVRoot"]
     J --> K["diff(previous, next)"]
@@ -157,8 +159,8 @@ flowchart TD
 - **배치**: 같은 동기 처리에서 setter를 여러 번 호출해도 예약은 1회다. 예약 콜백이 시작되면서 플래그를 내리므로, effect 안 setter는 현재 처리 뒤의 다음 microtask로 이어진다(UPD-05·06).
 - **화면이 같아도 하는 일**: `diff()`가 빈 배열을 반환하면 `applyPatch()`는 생략하지만 `syncEvents()`·`currentVDOM` 교체·`runEffects()`는 수행한다. 그래야 handler만 바뀐 갱신(UPD-03)과 deps만 바뀐 효과(EFF-01)가 반영된다.
 - **현재 VDOM**: `syncEvents()`까지 성공한 뒤에만 `nextRoot`로 교체한다. Diff나 Patch가 실패한 갱신은 마지막 성공 VDOM을 덮어쓰지 않는다.
-- **Hook 복사본**: `rememberHooksBeforeUpdate()`는 첫 변경 setter가 값을 쓰기 전에 슬롯 필드를 얕은 복사한다. 성공·실패와 무관하게 `update()`의 `finally`에서 복사본을 버린다. Patch 실패만 예외적으로 복사본으로 필드를 되돌린다(P2-FAIL-02).
-- **effect 시점**: `runEffects()`는 `finally` 밖에서 호출한다. effect가 setter를 호출하면 이미 복사본이 버려진 뒤이므로 새 배치의 시작 상태를 새로 복사한다.
+- **Hook 복사본**: `rememberStateValue()`는 첫 변경 setter가 값을 쓰기 전에 그 State 슬롯의 이전 값만 기록한다. 전체 슬롯 복사본은 예약 콜백이 시작되어 `update()`가 render를 시작하기 전에 만든다. 그 시점에는 직전 commit의 효과 실행이 끝나 cleanup·deps가 확정되어 있다. 성공·실패와 무관하게 `update()`의 `finally`에서 두 기록을 모두 버린다. Patch 실패만 예외적으로 복사본으로 필드를 되돌린 뒤 State 이전 값으로 덮어쓴다(P2-FAIL-03).
+- **effect 시점**: `runEffects()`는 `finally` 밖에서 호출한다. effect가 setter를 호출하면 State 이전 값만 새로 기록하고, 다음 microtask에서 효과 실행이 끝난 슬롯을 복사한다.
 
 ## 4. h() 흐름
 
@@ -180,7 +182,7 @@ h(tagName, props, ...children)
 │     └─ 그 밖
 │        └─ addAttribute(normalizeAttributeName(name), value)
 ├─ normalizeChildren(children)
-│  └─ appendChild() 재귀
+│  └─ appendChildValue(..., h 정책) 재귀
 │     ├─ null·undefined·boolean → 제외
 │     ├─ 배열 → 재귀 펼침
 │     ├─ 문자열·숫자 → appendTextChild() → createTextVNode()
@@ -209,7 +211,7 @@ children 규칙:
 | `null`·`undefined`·boolean | 목록에서 제외 |
 | 객체·함수·DOM Node·Promise 등 | 오류 |
 
-Component 반환값은 `h()`의 children과 구조 정리 규칙을 공유하지만, 원시 문자열·숫자를 Text VNode로 바꾸지 않고 오류로 처리한다. 텍스트는 `h()`에서만 만든다.
+Component 반환값은 `appendChildValue()`의 무시 값 제외·배열 펼침·VNode 판정을 공유하지만, 원시 문자열·숫자를 Text VNode로 바꾸지 않고 오류로 처리한다. 텍스트는 `h()`에서만 만든다.
 
 ## 5. 이벤트 연결과 동기화
 
@@ -315,12 +317,15 @@ applyPatch 실패
 │  └─ renderChildren(previousRoot, container)   마지막 성공 화면 재생성·dom 재연결
 │     └─ 복원 중 오류는 삼킨다                  원래 Patch 오류를 가리지 않는다
 ├─ restoreHooksBeforeUpdate()
-│  └─ Object.assign(slot, snapshot[index])      슬롯 객체·배열 동일성 유지
+│  ├─ Object.assign(slot, snapshot[index])      전체 슬롯 필드 복원, 동일성 유지
+│  └─ stateValues 기록으로 slot.value 덮어쓰기  배치 시작 전 State 값 복원
 ├─ updateScheduled = false                      다음 setter가 새 갱신을 예약
 └─ throw originalError                          원래 오류 전파
 ```
 
 복원은 얕은 복사다. State 값 객체를 제자리에서 변경하는 사용은 지원하지 않는다. 복원은 전체 재생성이므로 포커스·스크롤·비제어 입력 상태는 보존하지 않는다.
+
+전체 슬롯 복사본은 예약 갱신이 시작되는 시점에 만들고, State 이전 값은 setter 시점에 기록한다. 효과 실행 중 setter가 오면 그 시점의 효과 슬롯에는 아직 cleanup·deps가 확정되기 전이므로, setter에서 전체를 복사하면 실행 완료 정보를 잃는다(P2-FAIL-03).
 
 ## 7. 함수별 표
 
@@ -346,10 +351,8 @@ applyPatch 실패
 | `restoreLastCommittedRoot` | 내부 | `instance`, `previousRoot` | `void` | 마지막 성공 VDOM으로 컨테이너 재생성, 복원 오류 무시 | `restorePatchFailure` |
 | `renderComponent` | 내부 | `instance`, `phase` | `VNode[]` | Hook 문맥 설정·Component 실행·개수 검사·반환값 정규화 | `mount`·`update` |
 | `createVRoot` | 내부 | `nodes: VNode[]` | `VRoot` | `dom: null`인 비교 루트 생성 | `renderComponent` 직후 |
-| `normalizeComponentResult` | 내부 | `value: unknown` | `VNode[]` | 배열 펼침·빈 값 제외·VNode 검사 | `renderComponent` |
 | `scheduleUpdate` | 내부 | `instance` | `void` | 인스턴스별 1회 microtask 예약 | 변경된 setter |
 | `runEffects` | 내부 | `instance` | `void` | effect 슬롯을 호출 순서대로 실행 | `mount`·`update`의 commit 뒤 |
-| `createTextVNode` | 내부 | `nodeValue: string` | `VNode` | `nodeType: 3`, `tagName: null` 텍스트 VNode | `h()`의 텍스트 자식 |
 
 ### 7.3 Hook 내부
 
@@ -362,10 +365,11 @@ applyPatch 실패
 | `assertHookCountConsumed` | 내부 | `instance`, `phase` | `void` | update에서 Hook 개수 감소 검사 | `renderComponent` |
 | `createStateHookSlot` | 내부 | `instance`, `initialValue` | `StateHookSlot` | 값·자기 슬롯을 기억하는 setter 생성 | mount의 `useState` |
 | `applyStateUpdate` | 내부 | `instance`, `slot`, `next` | `void` | updater 계산·`Object.is` 비교·값 쓰기·예약 | setter 호출 |
-| `copyHookSlot` | 내부 | `slot` | `HookSlot` | 슬롯 필드 얕은 복사 | `rememberHooksBeforeUpdate` |
-| `rememberHooksBeforeUpdate` | 내부 | 없음(인스턴스 메서드) | `void` | 첫 setter에서 갱신 시작 전 슬롯 복사 | `applyStateUpdate` |
-| `restoreHooksBeforeUpdate` | 내부 | 없음(인스턴스 메서드) | `void` | 슬롯 필드를 복사본으로 되돌림 | `restorePatchFailure` |
-| `discardHooksBeforeUpdate` | 내부 | 없음(인스턴스 메서드) | `void` | 복사본 폐기 | `update`의 `finally`·복원 |
+| `copyHookSlot` | 내부 | `slot` | `HookSlot` | 슬롯 필드 얕은 복사 | `snapshotHooksBeforeUpdate` |
+| `rememberStateValue` | 내부 | `slot` | `void` | 슬롯별 첫 쓰기의 이전 State 값 기록 | `applyStateUpdate` |
+| `snapshotHooksBeforeUpdate` | 내부 | 없음(인스턴스 메서드) | `void` | render 전 전체 슬롯 필드 얕은 복사 | 예약 콜백 |
+| `restoreHooksBeforeUpdate` | 내부 | 없음(인스턴스 메서드) | `void` | 슬롯 필드를 복사본으로 되돌린 뒤 State 이전 값으로 덮어씀 | `restorePatchFailure` |
+| `discardHooksBeforeUpdate` | 내부 | 없음(인스턴스 메서드) | `void` | 복사본과 State 이전 값 기록 폐기 | `update`의 `finally`·복원 |
 | `assertMemoDependencies` | 내부 | `deps: unknown` | `readonly unknown[]` | 배열 검사 | `useMemo` |
 | `areHookDepsEqual` | 내부 | `previous`, `next` | `boolean` | 길이·`Object.is` 비교 | `useMemo`·`shouldRunEffect` |
 | `createMemoHookSlot` | 내부 | `calculate`, `deps` | `MemoHookSlot` | 첫 계산 후 기록 생성 | mount의 `useMemo` |
@@ -378,10 +382,11 @@ applyPatch 실패
 | `runEffectCleanup` | 내부 | `slot` | `void` | 슬롯을 비운 뒤 cleanup 호출 | `runEffectSlot` |
 | `invokeEffect` | 내부 | `effect` | `() => void \| null` | effect 실행·반환값 검사 | `runEffectSlot` |
 
-### 7.4 h()·정규화 내부
+### 7.4 h()·정규화 내부 (`src/component/h.ts`)
 
 | 이름 | 경계 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- | --- |
+| `normalizeComponentResult` | 내부 | `value: unknown` | `VNode[]` | 배열 펼침·빈 값 제외·VNode 검사, 원시값 오류 | `renderComponent` |
 | `normalizeTagName` | 내부 | `value: unknown` | `string` | 문자열 검사·trim·빈 값 검사·대문자화 | `h` |
 | `classifyProps` | 내부 | `tagName`, `props` | `{ attributes, properties, events }` | props 전체 분류 | `h` |
 | `classifyProp` | 내부 | `classified`, `tagName`, `name`, `value` | `void` | 이벤트 → property → attribute 순 판정 | `classifyProps` |
@@ -391,9 +396,9 @@ applyPatch 실패
 | `addAttribute` | 내부 | `attributes`, `name`, `value` | `void` | 생략·boolean·객체 오류·문자열 변환 | `classifyProp` |
 | `addEvent` | 내부 | `events`, `propName`, `value` | `void` | 이벤트 이름 변환·값 검사·원본 함수 저장 | `classifyProp` |
 | `normalizeChildren` | 내부 | `values: unknown[]` | `VNode[]` | 자식 목록 정규화 | `h` |
-| `appendChild` | 내부 | `nodes`, `value` | `void` | 재귀 펼침·Text 변환·허용값 검사 | `normalizeChildren` |
-| `isIgnoredChild` | 내부 | `value` | `boolean` | `null`·`undefined`·boolean 판정 | `h`·Component 정규화 |
-| `appendTextChild` | 내부 | `nodes`, `text` | `void` | 빈 문자열 제외 후 Text VNode 추가 | `appendChild` |
+| `appendChildValue` | 내부 | `nodes`, `value`, `policy` | `void` | 무시 값 제외·재귀 펼침·Text 변환·허용값 검사 | `normalizeChildren`·`normalizeComponentResult` |
+| `isIgnoredChild` | 내부 | `value` | `boolean` | `null`·`undefined`·boolean 판정 | `appendChildValue` |
+| `appendTextChild` | 내부 | `nodes`, `text` | `void` | 빈 문자열 제외 후 Text VNode 추가 | `appendChildValue` |
 | `isVNode` | 내부 | `value` | `value is VNode` | `nodeType`·`childNodes` 모양 검사 | children·Component 정규화 |
 
 ### 7.5 이벤트 내부
@@ -401,7 +406,6 @@ applyPatch 실패
 | 이름 | 경계 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- | --- |
 | `bindEvents` | 모듈 경계 | `element`, `events` | `void` | WeakMap 기록 + 최초 listener 연결 | `renderNode` |
-| `getNodeEvents` | 모듈 경계 | `node` | `VNodeEventMap \| undefined` | 기록 조회 | 현재 제품 경로에서 호출 없음 |
 | `syncEvents` | 모듈 경계 | `root: VRoot` | `void` | next 트리의 handler 연결을 기록과 맞춤 | `update`의 Patch 뒤 |
 | `syncNodeEvents` | 내부 | `node: VNode` | `void` | 요소면 동기화, 자식 재귀 | `syncEvents` |
 | `syncElementEvents` | 내부 | `node: VNode` | `void` | `dom` 연결 검사 후 요소 동기화 | `syncNodeEvents` |
@@ -428,4 +432,4 @@ applyPatch 실패
 | 실패 경계 | ERR-01·ERR-02 | `tests/integration/p2/errors.test.ts` |
 | 사용자 흐름 | FLOW-01–FLOW-03 | `tests/integration/p2/app.test.ts` |
 
-테스트 명세 ID는 33개이고, 같은 ID를 여러 입력·시나리오로 나눈 실행 단위와 명세 밖 보강 테스트를 포함한 실제 실행 단위는 75개다. 실행 결과와 파일별 수치는 [p2_test_boards.md](p2_test_boards.md)를 따른다.
+테스트 명세 ID는 33개이고, 같은 ID를 여러 입력·시나리오로 나눈 실행 단위와 명세 밖 보강 테스트를 포함한 실제 실행 단위는 77개다. 실행 결과와 파일별 수치는 [p2_test_boards.md](p2_test_boards.md)를 따른다.

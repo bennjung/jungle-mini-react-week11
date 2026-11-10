@@ -1,6 +1,6 @@
 # Phase 2 테스트 진행표
 
-기준: [p2_test_cases.md](p2_test_cases.md) §2–§8. 명세의 테스트 ID별로 한 행을 작성한다. 테스트 케이스는 INIT 4개, H 8개, HOOK 9개, UPD 6개, EFF 1개, ERR 2개, FLOW 3개로 총 **33행(테스트 ID 33개)** 이다. 실행 단위는 별도로 **75개**다. 같은 ID를 여러 입력·시나리오로 나눈 테스트와 명세 ID 밖 보강 테스트가 포함되기 때문이다. 설계 기준은 [wiki/Phase2-Design-merged.md](../wiki/Phase2-Design-merged.md)의 승인안과 [p2_decisions.md](p2_decisions.md)를 따른다.
+기준: [p2_test_cases.md](p2_test_cases.md) §2–§8. 명세의 테스트 ID별로 한 행을 작성한다. 테스트 케이스는 INIT 4개, H 8개, HOOK 9개, UPD 6개, EFF 1개, ERR 2개, FLOW 3개로 총 **33행(테스트 ID 33개)** 이다. 실행 단위는 별도로 **77개**다. 같은 ID를 여러 입력·시나리오로 나눈 테스트와 명세 ID 밖 보강 테스트가 포함되기 때문이다. 설계 기준은 [wiki/Phase2-Design-merged.md](../wiki/Phase2-Design-merged.md)의 승인안과 [p2_decisions.md](p2_decisions.md)를 따른다.
 
 결과는 `O` 통과, `X` 실패, 빈칸은 미실행 또는 일부만 검증됨을 뜻한다. 일부 검증만 통과한 케이스는 전체 통과로 표시하지 않는다. spy 기반 호출 기록 검증과 실제 DOM 검증의 범위를 원인 분석에 구분한다. 아래 모든 행은 2026-11-11 실행 결과로 채웠다.
 
@@ -35,26 +35,26 @@
 | 5. 갱신 (UPD) | **UPD-06** | 연속 setter 호출 후 최종 State와 화면이 일치한다. | O | 두 값이 모두 반영된 최종 화면 확인. |
 | 6. 생명주기 (EFF) | **EFF-01** | 의존성이 바뀌면 이전 cleanup이 새 effect보다 먼저 실행된다. | O | 실행 단위 11개. run→cleanup→run, deps 생략 시 매 render 실행·매번 cleanup, 여러 효과의 순서, deps 비배열 4개, cleanup 반환 오류 3개, 화면 불변에서의 효과 판단 확인. |
 | 7. 실패 (ERR) | **ERR-01** | 갱신 중 render 오류는 DOM 반영 전에 중단되고 이전 화면이 유지된다. | O | render 오류 시 DOM·현재 VDOM 유지, `applyPatch`·`syncEvents` 미호출, 첫 클릭의 State 증가 유지, 다음 갱신 정상. |
-| 7. 실패 (ERR) | **ERR-02** | applyPatch 실패는 마지막 성공 VDOM으로 복구하고 오류를 전파한다. | O | 실행 단위 2개. 부분 DOM 변경 후 마지막 성공 화면 재생성, 훅 슬롯 복원으로 같은 setter 재예약, `syncEvents`·effect 미실행, 다음 갱신 정상. |
+| 7. 실패 (ERR) | **ERR-02** | applyPatch 실패는 마지막 성공 VDOM으로 복구하고 오류를 전파한다. | O | 실행 단위 3개. 부분 DOM 변경 후 마지막 성공 화면 재생성, 훅 슬롯 복원으로 같은 setter 재예약, `syncEvents`·effect 미실행, 다음 갱신 정상. effect setter로 시작한 갱신이 실패해도 이미 실행한 `[]` 효과가 다시 실행되지 않음을 확인. |
 | 8. 통합 (FLOW) | **FLOW-01** | 카운터에서 클릭·State·화면 반영이 자동으로 이어진다. | O | 증가 3회·감소 1회 후 화면 2, 루트 요소 객체 유지 확인. |
 | 8. 통합 (FLOW) | **FLOW-02** | 자식 컴포넌트가 props만 사용하고 부모 State 변경이 자식 화면에 반영된다. | O | 자식 버튼 클릭이 부모 setter까지 연결되고 새 props가 자식 텍스트에 반영됨을 확인. |
 | 8. 통합 (FLOW) | **FLOW-03** | 입력 요소의 value·checked가 properties를 거쳐 화면에 반영된다. | O | 최초 value A·checked false, 갱신 후 B·true, input 요소 객체 유지 확인. |
 
 ## 실행 단위 구성
 
-테스트 ID 33개와 실행 단위 75개를 구분한다. 75개는 다음 네 파일의 실제 실행 단위 합이다.
+테스트 ID 33개와 실행 단위 77개를 구분한다. 77개는 다음 네 파일의 실제 실행 단위 합이다.
 
 | 파일 | 실행 단위 | 구성 |
 | --- | --- | --- |
 | [tests/unit/p2/h.test.ts](../tests/unit/p2/h.test.ts) | 19 | H-01–H-08 직접 검증 9개 + 같은 규칙의 보강 10개 |
 | [tests/unit/p2/hooks.test.ts](../tests/unit/p2/hooks.test.ts) | 35 | HOOK-01–HOOK-09, EFF-01 직접 검증 20개 + deps·cleanup·여러 효과 보강 15개 |
 | [tests/integration/p2/app.test.ts](../tests/integration/p2/app.test.ts) | 16 | INIT·UPD·FLOW 직접 검증 15개 + 컴포넌트 오류 전파 보강 1개 |
-| [tests/integration/p2/errors.test.ts](../tests/integration/p2/errors.test.ts) | 5 | ERR-01·ERR-02 직접 검증 3개 + `syncEvents`·effect 오류 보강 2개 |
-| **합계** | **75** | 테스트 ID 33개를 여러 입력·시나리오로 나눈 실행 단위와 보강 테스트 포함 |
+| [tests/integration/p2/errors.test.ts](../tests/integration/p2/errors.test.ts) | 7 | ERR-01·ERR-02 직접 검증 4개 + `syncEvents`·effect·cleanup 오류 보강 3개 |
+| **합계** | **77** | 테스트 ID 33개를 여러 입력·시나리오로 나눈 실행 단위와 보강 테스트 포함 |
 
 ## 테스트 코드 위치
 
-공개 경계는 `src/component/index.ts`다. `h`, `startApp`, `useState`, `useMemo`, `useEffect`를 여기서 내보낸다.
+공개 경계는 `src/component/index.ts`다. `h`, `startApp`, `useState`, `useMemo`, `useEffect`를 여기서 내보낸다. `h`의 구현은 `src/component/h.ts`에 있고 `index.ts`가 re-export한다.
 
 | 범위 | 파일 |
 | --- | --- |
@@ -66,11 +66,15 @@
 
 ## 실행 기록
 
-- 2026-11-10: `tests/unit/p2/*`, `tests/integration/p2/*` 작성. 구현 전이므로 `npx vitest run tests/unit/p2 tests/integration/p2` 결과는 **32 실패 / 4 통과**(테스트 36개)였다. 통과 4개는 `H-04`·`H-05`·`H-08`·`HOOK-07`이며, 미구현 stub이 항상 예외를 던져 생긴 가짜 통과였다. 이후 구현·보강으로 실행 단위가 75개가 됐다.
+- 2026-11-10: `tests/unit/p2/*`, `tests/integration/p2/*` 작성. 구현 전이므로 `npx vitest run tests/unit/p2 tests/integration/p2` 결과는 **32 실패 / 4 통과**(테스트 36개)였다. 통과 4개는 `H-04`·`H-05`·`H-08`·`HOOK-07`이며, 미구현 stub이 항상 예외를 던져 생긴 가짜 통과였다. 이후 구현·보강과 회귀 테스트 추가로 실행 단위가 77개가 됐다.
 - 2026-11-11: `npx vitest run tests/unit/p2 tests/integration/p2 --reporter=json` → **4개 파일, 75개 통과, exit 0**. 파일별 19 + 35 + 16 + 5.
 - 2026-11-11: `npm test` → **26개 파일, 268개 통과, exit 0, unhandled error 0**. Phase 1 회귀는 22개 파일 193개 통과다.
 - 2026-11-11: `npm run check` → 타입 검사와 전체 테스트 통과, exit 0.
-- 수치 주의: #61 본문의 "실행 단위 36개"는 최초 테스트 작성 시점의 수치다. 구현·보강 후 실제 실행 단위는 **75개**이며, 테스트 ID는 **33개**다. 두 수를 같게 기록하지 않는다.
+- 2026-11-11: ERR-02 effect setter 복원 회귀 1개와 effect cleanup 오류 1개를 `tests/integration/p2/errors.test.ts`에 추가. `npx vitest run tests/integration/p2/errors.test.ts`는 수정 전 **1 실패 / 6 통과, exit 1**(`['effect','effect']` ≠ `['effect']`), 수정 후 **7 통과, exit 0**이었다.
+- 2026-11-11: `npx vitest run tests/unit/p2 tests/integration/p2 --reporter=dot` → **4개 파일, 77개 통과, exit 0**. 파일별 19 + 35 + 16 + 7.
+- 2026-11-11: `npm test` → **26개 파일, 270개 통과, exit 0, unhandled error 0**. Phase 1 회귀는 22개 파일 193개 통과다.
+- 2026-11-11: `npm run check` → 타입 검사와 전체 테스트 통과, exit 0.
+- 수치 주의: #61 본문의 "실행 단위 36개"는 최초 테스트 작성 시점의 수치다. 구현·보강 후 실제 실행 단위는 **77개**이며, 테스트 ID는 **33개**다. 두 수를 같게 기록하지 않는다.
 
 ## 확정된 경계
 

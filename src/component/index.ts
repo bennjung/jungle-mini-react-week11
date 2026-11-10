@@ -2,26 +2,15 @@
  * Phase 2 공개 경계.
  * 아직 구현하지 않은 Hook은 호출 시 오류를 던져 테스트 실패 원인을 드러낸다.
  */
-import { propertySchema } from '../vdom/create';
 import { diff } from '../vdom/diff';
 import { syncEvents } from '../vdom/events';
 import { applyPatch, renderChildren } from '../vdom/patch';
-import type {
-  DiffCommand,
-  VNode,
-  VNodeAttribute,
-  VNodeEventMap,
-  VNodeProperties,
-  VRoot
-} from '../vdom/types';
+import type { DiffCommand, VNode, VRoot } from '../vdom/types';
+import { describeValue, normalizeComponentResult } from './h';
+
+export { h } from './h';
 
 type ComponentFunction = () => unknown;
-
-type ClassifiedProps = {
-  attributes: VNodeAttribute[];
-  properties: VNodeProperties;
-  events: VNodeEventMap;
-};
 
 type HookPhase = 'mount' | 'update';
 
@@ -59,37 +48,6 @@ type EffectHookSlot = {
 };
 
 type HookSlot = StateHookSlot | MemoHookSlot | EffectHookSlot;
-
-// 이벤트 prop 이름은 사용자 표기(onClick)를, 값은 실제 DOM 이벤트 이름을 쓴다.
-const eventNameByProp: Readonly<Record<string, string>> = {
-  onClick: 'click',
-  onInput: 'input',
-  onChange: 'change'
-};
-
-export function h(
-  tagName: string,
-  props?: Record<string, unknown> | null,
-  ...children: unknown[]
-): VNode {
-  const normalizedTagName = normalizeTagName(tagName);
-  const { attributes, properties, events } = classifyProps(normalizedTagName, props);
-
-  const node: VNode = {
-    nodeType: 1,
-    tagName: normalizedTagName,
-    attributes,
-    nodeValue: null,
-    childNodes: normalizeChildren(children),
-    properties,
-    dom: null
-  };
-
-  // 1단계 VNode와 같은 모양을 유지하려고 이벤트가 없으면 필드 자체를 만들지 않는다.
-  if (Object.keys(events).length > 0) node.events = events;
-
-  return node;
-}
 
 /**
  * 컨테이너별 1회 시작 표식.
@@ -163,9 +121,16 @@ class FunctionComponent {
   updateScheduled = false;
   /**
    * 이번 갱신이 시작되기 전 Hook 슬롯 필드의 얕은 복사본.
-   * applyPatch 실패 시 화면과 내부 상태를 같은 시점으로 되돌리는 기준이다.
+   * 예약된 갱신이 실제로 시작되는 시점에 만든다. applyPatch 실패 시 화면과 내부 상태를
+   * 같은 시점으로 되돌리는 기준이다.
    */
   hooksBeforeUpdate: HookSlot[] | null = null;
+  /**
+   * 이번 배치에서 setter가 덮어쓰기 전의 State 값. 슬롯별 첫 쓰기만 기록한다.
+   * 갱신 시작 시점의 전체 복사본에는 이미 새 값이 들어 있으므로, 복원에서 State만
+   * 배치 시작 전 값으로 다시 덮어쓰기 위해 별도로 보관한다.
+   */
+  stateValuesBeforeUpdate: Map<StateHookSlot, unknown> | null = null;
 
   constructor(component: ComponentFunction, container: Element) {
     this.component = component;
@@ -173,13 +138,26 @@ class FunctionComponent {
   }
 
   /**
-   * 첫 setter가 값을 쓰기 전에 슬롯을 복사한다.
-   * 갱신 시작 시점에 복사하면 이미 새 값이 들어 있어 되돌릴 수 없다.
+   * setter가 값을 쓰기 전에 State 슬롯의 이전 값만 기록한다.
+   * 전체 슬롯은 여기서 복사하지 않는다. 효과 실행 중 setter가 오면 그 시점의 효과
+   * 슬롯에는 아직 cleanup·deps가 확정되기 전이므로, 복사본이 실행 완료 정보를 잃는다.
    */
-  rememberHooksBeforeUpdate(): void {
-    // 여러 setter가 한 배치에 들어와도 시작 상태는 하나다. 첫 복사본만 유지한다.
-    if (this.hooksBeforeUpdate !== null) return;
+  rememberStateValue(slot: StateHookSlot): void {
+    // 여러 setter가 한 배치에 들어와도 슬롯별 시작 값은 하나다. 첫 쓰기만 기록한다.
+    if (this.stateValuesBeforeUpdate === null) {
+      this.stateValuesBeforeUpdate = new Map();
+    }
 
+    if (this.stateValuesBeforeUpdate.has(slot)) return;
+
+    this.stateValuesBeforeUpdate.set(slot, slot.value);
+  }
+
+  /**
+   * 예약된 갱신이 실제로 시작될 때 전체 Hook 슬롯을 복사한다.
+   * 이 시점에는 직전 commit의 효과 실행이 끝나 cleanup·deps가 확정되어 있다.
+   */
+  snapshotHooksBeforeUpdate(): void {
     this.hooksBeforeUpdate = this.hooks.map(copyHookSlot);
   }
 
@@ -189,22 +167,32 @@ class FunctionComponent {
    */
   restoreHooksBeforeUpdate(): void {
     const snapshot = this.hooksBeforeUpdate;
-    if (snapshot === null) return;
+    if (snapshot !== null) {
+      for (let index = 0; index < snapshot.length; index += 1) {
+        const slot = this.hooks[index];
+        const saved = snapshot[index];
+        if (slot === undefined || saved === undefined) continue;
 
-    for (let index = 0; index < snapshot.length; index += 1) {
-      const slot = this.hooks[index];
-      const saved = snapshot[index];
-      if (slot === undefined || saved === undefined) continue;
+        Object.assign(slot, saved);
+      }
+    }
 
-      Object.assign(slot, saved);
+    // 갱신 시작 복사본은 setter가 이미 쓴 새 State 값을 담고 있다. 배치 시작 전
+    // State 값으로 다시 덮어써야 화면 복구와 내부 상태가 같은 시점을 가리킨다.
+    const stateValues = this.stateValuesBeforeUpdate;
+    if (stateValues !== null) {
+      for (const [slot, value] of stateValues) {
+        slot.value = value;
+      }
     }
 
     this.discardHooksBeforeUpdate();
   }
 
-  /** 성공한 갱신이 끝나면 복사본을 버려 다음 배치가 새 시작 상태를 복사하게 한다. */
+  /** 성공한 갱신이 끝나면 복사본과 State 이전 값 기록을 버려 다음 배치가 새로 시작하게 한다. */
   discardHooksBeforeUpdate(): void {
     this.hooksBeforeUpdate = null;
+    this.stateValuesBeforeUpdate = null;
   }
 
   /**
@@ -245,13 +233,14 @@ class FunctionComponent {
       // 성공한 갱신만 현재 VDOM이 된다. 실패한 갱신은 마지막 성공 상태를 덮어쓰지 않는다.
       this.currentVDOM = nextRoot;
     } finally {
-      // 성공·실패 모두 이번 갱신의 복사본은 commit 경계에서 끝난다. applyPatch 실패는
-      // 예외를 전파하기 전에 복원을 마쳤으므로 여기서는 남은 복사본만 버린다.
+      // 성공·실패 모두 이번 갱신의 복사본과 State 이전 값 기록은 commit 경계에서 끝난다.
+      // applyPatch 실패는 예외를 전파하기 전에 복원을 마쳤으므로 여기서는 남은 기록만 버린다.
       this.discardHooksBeforeUpdate();
     }
 
-    // effect 안 setter는 다음 갱신으로 이어진다. 복사본을 버린 뒤 실행해야 그 setter가
-    // 새 배치의 시작 상태를 복사할 수 있다. 화면 변경이 없어도 효과 판단은 생략하지 않는다.
+    // effect 안 setter는 다음 갱신으로 이어진다. State 이전 값 기록을 버린 뒤 실행해야
+    // 그 setter가 새 배치의 값을 기록하고, 다음 microtask가 효과 실행 완료 뒤의 슬롯을
+    // 복사할 수 있다. 화면 변경이 없어도 효과 판단은 생략하지 않는다.
     runEffects(this);
   }
 }
@@ -537,9 +526,9 @@ function applyStateUpdate(
   // 같은 값이면 슬롯도 쓰지 않고 갱신도 예약하지 않는다.
   if (Object.is(previous, value)) return;
 
-  // 되돌릴 기준은 setter가 값을 쓰기 전 상태다. 갱신이 시작된 뒤에 복사하면 이미 새 값이
-  // 들어 있으므로, 첫 setter에서 값 대입보다 먼저 이번 배치의 복사본을 만든다.
-  instance.rememberHooksBeforeUpdate();
+  // 전체 슬롯 복사본은 갱신이 시작될 때 만든다. 여기서는 복원에 필요한 State 이전
+  // 값만 값 대입보다 먼저 기록한다.
+  instance.rememberStateValue(slot);
 
   slot.value = value;
   scheduleUpdate(instance);
@@ -553,6 +542,11 @@ function scheduleUpdate(instance: FunctionComponent): void {
   instance.updateScheduled = true;
   queueMicrotask(() => {
     instance.updateScheduled = false;
+
+    // 효과는 commit 뒤에 실행되고 cleanup·deps는 효과가 반환된 뒤에 확정된다.
+    // setter 시점에 복사하면 아직 확정되지 않은 효과 슬롯을 복원 기준으로 삼게 되므로,
+    // 직전 commit의 효과 실행이 끝난 지금(render 전) 전체 슬롯을 복사한다.
+    instance.snapshotHooksBeforeUpdate();
     instance.update();
   });
 }
@@ -592,37 +586,6 @@ function assertHookCountConsumed(
   }
 }
 
-/**
- * 컴포넌트 반환값을 자식 VNode 목록으로 바꾼다.
- * h()와 달리 원시 문자열·숫자를 Text VNode로 바꾸지 않는다. 텍스트는 h()에서만 만든다.
- */
-function normalizeComponentResult(value: unknown): VNode[] {
-  const nodes: VNode[] = [];
-  appendComponentResult(nodes, value);
-  return nodes;
-}
-
-function appendComponentResult(nodes: VNode[], value: unknown): void {
-  if (isIgnoredChild(value)) return;
-
-  // 배열은 화면 조각 목록이므로 Fragment 노드 없이 자식 목록 자체를 펼친다.
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      appendComponentResult(nodes, item);
-    }
-    return;
-  }
-
-  if (isVNode(value)) {
-    nodes.push(value);
-    return;
-  }
-
-  throw new Error(
-    `컴포넌트 반환값으로 지원하지 않는 값입니다: ${describeValue(value)}`
-  );
-}
-
 function createVRoot(nodes: VNode[]): VRoot {
   return { childNodes: nodes, dom: null };
 }
@@ -635,178 +598,4 @@ function assertStartContainer(container: Element): void {
   if (startedContainers.has(container)) {
     throw new Error('이미 startApp으로 시작한 container입니다');
   }
-}
-
-function normalizeTagName(value: unknown): string {
-  if (typeof value !== 'string') {
-    throw new Error('tagName은 문자열이어야 합니다');
-  }
-
-  // Phase 1 createSnapshot과 같은 대문자 표기를 써야 Diff가 같은 노드로 인식한다.
-  const trimmed = value.trim();
-  if (trimmed === '') {
-    throw new Error('tagName은 비어 있을 수 없습니다');
-  }
-
-  return trimmed.toUpperCase();
-}
-
-function classifyProps(
-  tagName: string,
-  props?: Record<string, unknown> | null
-): ClassifiedProps {
-  const classified: ClassifiedProps = {
-    attributes: [],
-    properties: {},
-    events: {}
-  };
-
-  for (const [name, value] of Object.entries(props ?? {})) {
-    classifyProp(classified, tagName, name, value);
-  }
-
-  return classified;
-}
-
-function classifyProp(
-  classified: ClassifiedProps,
-  tagName: string,
-  name: string,
-  value: unknown
-): void {
-  if (isEventProp(name)) {
-    addEvent(classified.events, name, value);
-    return;
-  }
-
-  if (isPropertyProp(tagName, name)) {
-    // properties는 DOM 프로퍼티에 그대로 대입되므로 타입을 강제 변환하지 않는다.
-    classified.properties[name] = value;
-    return;
-  }
-
-  addAttribute(classified.attributes, normalizeAttributeName(name), value);
-}
-
-function isEventProp(name: string): boolean {
-  return name.startsWith('on');
-}
-
-function isPropertyProp(tagName: string, name: string): boolean {
-  return (propertySchema[tagName] ?? []).includes(name);
-}
-
-function normalizeAttributeName(name: string): string {
-  return name === 'className' ? 'class' : name;
-}
-
-function addAttribute(
-  attributes: VNodeAttribute[],
-  name: string,
-  value: unknown
-): void {
-  if (value === null || value === undefined || value === false) return;
-
-  // style·dataset 같은 객체를 "[object Object]" 문자열로 조용히 바꾸지 않는다.
-  if (typeof value === 'object') {
-    throw new Error(`지원하지 않는 prop 값입니다: ${name} (${describeValue(value)})`);
-  }
-
-  attributes.push({ name, value: value === true ? '' : String(value) });
-}
-
-function addEvent(
-  events: VNodeEventMap,
-  propName: string,
-  value: unknown
-): void {
-  const eventName = eventNameByProp[propName];
-  if (eventName === undefined) {
-    throw new Error(`지원하지 않는 이벤트 prop입니다: ${propName}`);
-  }
-
-  if (value === null || value === undefined) return;
-
-  if (typeof value !== 'function') {
-    throw new Error(`이벤트 prop 값은 함수여야 합니다: ${propName}`);
-  }
-
-  events[eventName] = value as EventListener;
-}
-
-function normalizeChildren(values: unknown[]): VNode[] {
-  const nodes: VNode[] = [];
-
-  for (const value of values) {
-    appendChild(nodes, value);
-  }
-
-  return nodes;
-}
-
-function appendChild(nodes: VNode[], value: unknown): void {
-  if (isIgnoredChild(value)) return;
-
-  // Fragment를 별도 노드로 만들지 않고 자식 목록 자체를 펼친다.
-  if (Array.isArray(value)) {
-    for (const item of value) {
-      appendChild(nodes, item);
-    }
-    return;
-  }
-
-  if (typeof value === 'string') {
-    appendTextChild(nodes, value);
-    return;
-  }
-
-  if (typeof value === 'number') {
-    appendTextChild(nodes, String(value));
-    return;
-  }
-
-  if (isVNode(value)) {
-    nodes.push(value);
-    return;
-  }
-
-  throw new Error(`지원하지 않는 자식 값입니다: ${describeValue(value)}`);
-}
-
-function isIgnoredChild(value: unknown): boolean {
-  return value === null || value === undefined || typeof value === 'boolean';
-}
-
-function appendTextChild(nodes: VNode[], text: string): void {
-  // 빈 문자열은 화면에 아무것도 만들지 않으므로 Text VNode도 만들지 않는다.
-  if (text === '') return;
-
-  nodes.push(createTextVNode(text));
-}
-
-function createTextVNode(nodeValue: string): VNode {
-  return {
-    nodeType: 3,
-    tagName: null,
-    attributes: [],
-    nodeValue,
-    childNodes: [],
-    properties: {},
-    dom: null
-  };
-}
-
-function isVNode(value: unknown): value is VNode {
-  if (typeof value !== 'object' || value === null) return false;
-
-  const candidate = value as Partial<VNode>;
-  // DOM Node의 childNodes는 NodeList라서 배열 검사에서 걸러진다.
-  return (
-    (candidate.nodeType === 1 || candidate.nodeType === 3) &&
-    Array.isArray(candidate.childNodes)
-  );
-}
-
-function describeValue(value: unknown): string {
-  return Object.prototype.toString.call(value);
 }

@@ -1,3 +1,5 @@
+import { vi } from 'vitest';
+
 /** 테스트마다 body를 비워 이전 앱의 DOM·listener가 남지 않게 한다. */
 export function resetBody(): void {
   document.body.replaceChildren();
@@ -36,4 +38,22 @@ export function textNodes(container: ParentNode): string[] {
   return Array.from(container.querySelectorAll('span')).map(
     (span) => span.textContent ?? ''
   );
+}
+
+/**
+ * 예약된 갱신을 테스트가 직접 실행하기 위해 queueMicrotask를 가로챈다.
+ * 예약 경로에서 던진 오류를 unhandled error로 흘리지 않고 expect().toThrow()로 잡기 위함이다.
+ */
+export function captureScheduledUpdates(): {
+  scheduled: VoidFunction[];
+  restore: () => void;
+} {
+  const scheduled: VoidFunction[] = [];
+  const spy = vi
+    .spyOn(globalThis, 'queueMicrotask')
+    .mockImplementation((callback) => {
+      scheduled.push(callback);
+    });
+
+  return { scheduled, restore: () => spy.mockRestore() };
 }
