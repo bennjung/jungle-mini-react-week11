@@ -110,6 +110,59 @@ describe('INIT-04 startApp은 container를 검증하고 반복 시작을 막는�
     expect(() => startApp(App, container)).toThrow();
     expect(container.querySelector('p')).toBe(paragraph);
   });
+
+  it('반복 시작이 거부된 뒤에도 첫 앱의 handler가 계속 동작한다', () => {
+    let calls = 0;
+
+    function App() {
+      return h('button', { onClick: () => { calls += 1; } }, 'A');
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    expect(() => startApp(App, container)).toThrow();
+
+    buttonByText(container, 'A').click();
+    expect(calls).toBe(1);
+  });
+});
+
+describe('INIT-01 정적 앱에서 input·change가 각각 한 번 실행된다', () => {
+  it('직접 연결한 handler가 이벤트마다 한 번씩 실행된다', () => {
+    const calls: string[] = [];
+
+    function App() {
+      return h('input', {
+        onInput: () => calls.push('input'),
+        onChange: () => calls.push('change')
+      });
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    const input = container.querySelector('input')!;
+    input.dispatchEvent(new Event('input'));
+    input.dispatchEvent(new Event('change'));
+
+    expect(calls).toEqual(['input', 'change']);
+  });
+});
+
+describe('컴포넌트 오류는 startApp 호출자에게 전파된다', () => {
+  it('컴포넌트가 던진 오류가 그대로 전달되고 DOM은 만들어지지 않는다', () => {
+    const failure = new Error('component failure');
+
+    function App(): never {
+      throw failure;
+    }
+
+    const container = createContainer();
+
+    expect(() => startApp(App, container)).toThrow(failure);
+    expect(container.childNodes).toHaveLength(0);
+  });
 });
 
 describe('UPD-01 State 변경이 자동 재렌더와 필요한 Patch로 이어진다', () => {

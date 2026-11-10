@@ -1,14 +1,18 @@
 /**
  * Phase 2 공개 경계.
- * 아직 구현 전인 함수는 테스트가 이 경계를 통해 실패하는지 확인하는 단계다.
+ * 아직 구현하지 않은 Hook은 호출 시 오류를 던져 테스트 실패 원인을 드러낸다.
  */
 import { propertySchema } from '../vdom/create';
+import { renderChildren } from '../vdom/patch';
 import type {
   VNode,
   VNodeAttribute,
   VNodeEventMap,
-  VNodeProperties
+  VNodeProperties,
+  VRoot
 } from '../vdom/types';
+
+type ComponentFunction = () => unknown;
 
 type ClassifiedProps = {
   attributes: VNodeAttribute[];
@@ -47,8 +51,20 @@ export function h(
   return node;
 }
 
-export function startApp(_component: () => unknown, _container: Element): void {
-  throw new Error('startApp() is not implemented');
+/**
+ * 컨테이너별 1회 시작 표식.
+ * 첫 렌더가 실패해도 해제하지 않는다. 부분 화면이 남은 컨테이너를 다시 시작하면
+ * 이전 실패의 흔적 위에 새 앱이 겹치기 때문이다.
+ */
+const startedContainers = new WeakSet<Element>();
+
+export function startApp(component: ComponentFunction, container: Element): void {
+  assertStartContainer(container);
+
+  // 검증 직후 사용 중으로 등록한다. 첫 렌더가 실패해도 같은 컨테이너는 재사용할 수 없다.
+  startedContainers.add(container);
+
+  new FunctionComponent(component, container).mount();
 }
 
 export function useState<T>(
@@ -66,6 +82,92 @@ export function useEffect(
   _deps?: unknown[]
 ): void {
   throw new Error('useEffect() is not implemented');
+}
+
+/**
+ * 루트 컴포넌트의 실행 상태. 사용자 API로 노출하지 않고 startApp 내부에서만 쓴다.
+ */
+class FunctionComponent {
+  readonly component: ComponentFunction;
+  readonly container: Element;
+  // Hook 기록은 #57에서 이 자리에 채운다. 지금은 mount가 소비하지 않는다.
+  hooks: unknown[] = [];
+  cursor = 0;
+  currentVDOM: VRoot | null = null;
+
+  constructor(component: ComponentFunction, container: Element) {
+    this.component = component;
+    this.container = container;
+  }
+
+  /**
+   * 최초 렌더링. 반환값 검증이 끝난 뒤에만 컨테이너를 교체하므로
+   * 컴포넌트 오류는 DOM을 건드리지 않고 호출자에게 전파된다.
+   */
+  mount(): void {
+    const root = createVRoot(renderComponent(this));
+    renderChildren(root, this.container);
+
+    // 성공한 렌더만 비교 기준이 된다. 실패한 렌더는 이전 화면을 덮어쓰지 않는다.
+    this.currentVDOM = root;
+
+    // effect 실행은 commit 뒤 단계로 #59에서 추가한다.
+  }
+}
+
+/**
+ * 컴포넌트를 실행하고 반환값을 VNode 목록으로 정규화한다.
+ * DOM 생성 전에 검증하므로 잘못된 반환값이 부분 화면을 남기지 않는다.
+ */
+function renderComponent(instance: FunctionComponent): VNode[] {
+  // Hook 문맥 연결과 cursor 초기화는 Hook 구현(#57)과 함께 이 단계에 들어온다.
+  const result = instance.component();
+  return normalizeComponentResult(result);
+}
+
+/**
+ * 컴포넌트 반환값을 자식 VNode 목록으로 바꾼다.
+ * h()와 달리 원시 문자열·숫자를 Text VNode로 바꾸지 않는다. 텍스트는 h()에서만 만든다.
+ */
+function normalizeComponentResult(value: unknown): VNode[] {
+  const nodes: VNode[] = [];
+  appendComponentResult(nodes, value);
+  return nodes;
+}
+
+function appendComponentResult(nodes: VNode[], value: unknown): void {
+  if (isIgnoredChild(value)) return;
+
+  // 배열은 화면 조각 목록이므로 Fragment 노드 없이 자식 목록 자체를 펼친다.
+  if (Array.isArray(value)) {
+    for (const item of value) {
+      appendComponentResult(nodes, item);
+    }
+    return;
+  }
+
+  if (isVNode(value)) {
+    nodes.push(value);
+    return;
+  }
+
+  throw new Error(
+    `컴포넌트 반환값으로 지원하지 않는 값입니다: ${describeValue(value)}`
+  );
+}
+
+function createVRoot(nodes: VNode[]): VRoot {
+  return { childNodes: nodes, dom: null };
+}
+
+function assertStartContainer(container: Element): void {
+  if (!(container instanceof Element)) {
+    throw new Error('startApp의 container는 Element여야 합니다');
+  }
+
+  if (startedContainers.has(container)) {
+    throw new Error('이미 startApp으로 시작한 container입니다');
+  }
 }
 
 function normalizeTagName(value: unknown): string {
