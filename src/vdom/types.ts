@@ -5,6 +5,8 @@ export type VNodeAttribute = {
 
 export type VNodeProperties = Record<string, unknown>;
 
+export type VNodeEventMap = Record<string, EventListener>;
+
 export type VNodeType = 1 | 3;
 
 /**
@@ -20,6 +22,8 @@ export interface VNode {
   childNodes: VNode[];
   properties: VNodeProperties;
   dom: Node | null;
+  // Phase 1 fixture와의 호환을 위해 선택 필드로 둔다. 없으면 이벤트가 없는 노드다.
+  events?: VNodeEventMap;
 }
 
 /**

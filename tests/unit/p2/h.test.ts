@@ -140,3 +140,97 @@ describe('H-08 tagName이 문자열이 아니면 오류다', () => {
     expect(() => h(null as unknown as string, {}, 'A')).toThrow();
   });
 });
+
+describe('h() props 인자를 생략하거나 null·undefined로 넘길 수 있다', () => {
+  it('모두 빈 attributes·properties로 처리하고 events 필드를 만들지 않는다', () => {
+    const nodes = [h('div'), h('div', null), h('div', undefined)];
+
+    for (const node of nodes) {
+      expect(node.attributes).toEqual([]);
+      expect(node.properties).toEqual({});
+      expect(node.events).toBeUndefined();
+    }
+  });
+});
+
+describe('h()는 tagName을 trim한 뒤 대문자로 저장한다', () => {
+  it('앞뒤 공백을 제거한 이름을 쓴다', () => {
+    expect(h(' div ', {}, 'A').tagName).toBe('DIV');
+  });
+});
+
+describe('h()는 className을 class로 정규화한다', () => {
+  it('className prop은 class attribute로 저장된다', () => {
+    const node = h('div', { className: 'box' });
+
+    expect(attributeMap(node)).toEqual({ class: 'box' });
+  });
+});
+
+describe('h()는 style·dataset 객체 props를 오류로 처리한다', () => {
+  it('객체 값을 attribute로 변환하지 않는다', () => {
+    expect(() => h('div', { style: { color: 'red' } })).toThrow();
+    expect(() => h('div', { dataset: { id: 'a' } })).toThrow();
+  });
+});
+
+describe('h()는 태그별 propertySchema를 재사용한다', () => {
+  it('INPUT의 value는 properties, DIV의 value는 attributes로 분류한다', () => {
+    const input = h('input', { value: 'A' });
+    const div = h('div', { value: 'A' });
+
+    expect(input.properties).toEqual({ value: 'A' });
+    expect(attributeMap(input)).toEqual({});
+    expect(div.properties).toEqual({});
+    expect(attributeMap(div)).toEqual({ value: 'A' });
+  });
+
+  it('properties 값은 받은 그대로 저장한다', () => {
+    const input = h('input', { value: 0, checked: false });
+
+    expect(input.properties).toEqual({ value: 0, checked: false });
+  });
+});
+
+describe('h()는 onClick·onInput·onChange를 events에 원본 함수로 담는다', () => {
+  it('DOM 이벤트 이름으로 저장하고 wrapper로 감싸지 않는다', () => {
+    const click = () => {};
+    const input = () => {};
+    const change = () => {};
+    const node = h('input', {
+      onClick: click,
+      onInput: input,
+      onChange: change
+    });
+
+    expect(node.events).toEqual({ click, input, change });
+    expect(node.events?.click).toBe(click);
+    expect(node.events?.input).toBe(input);
+    expect(node.events?.change).toBe(change);
+  });
+});
+
+describe('h()는 null·undefined 이벤트를 연결하지 않는다', () => {
+  it('이벤트가 없으면 events 필드를 만들지 않는다', () => {
+    const node = h('button', { onClick: null, onInput: undefined }, '저장');
+
+    expect(node.events).toBeUndefined();
+    expect(Object.prototype.hasOwnProperty.call(node, 'events')).toBe(false);
+  });
+});
+
+describe('Text VNode에는 events 필드가 없다', () => {
+  it('문자열 자식은 이벤트를 갖지 않는다', () => {
+    const text = h('p', {}, 'A').childNodes[0]!;
+
+    expect(text.nodeType).toBe(3);
+    expect(Object.prototype.hasOwnProperty.call(text, 'events')).toBe(false);
+  });
+});
+
+describe('h()는 지원 밖 on* prop과 함수가 아닌 이벤트 값을 오류로 처리한다', () => {
+  it('onBlur·onClick 문자열을 받지 않는다', () => {
+    expect(() => h('div', { onBlur: () => {} })).toThrow();
+    expect(() => h('div', { onClick: 'handler' })).toThrow();
+  });
+});
