@@ -161,10 +161,50 @@ class FunctionComponent {
   phase: HookPhase = 'mount';
   currentVDOM: VRoot | null = null;
   updateScheduled = false;
+  /**
+   * 이번 갱신이 시작되기 전 Hook 슬롯 필드의 얕은 복사본.
+   * applyPatch 실패 시 화면과 내부 상태를 같은 시점으로 되돌리는 기준이다.
+   */
+  hooksBeforeUpdate: HookSlot[] | null = null;
 
   constructor(component: ComponentFunction, container: Element) {
     this.component = component;
     this.container = container;
+  }
+
+  /**
+   * 첫 setter가 값을 쓰기 전에 슬롯을 복사한다.
+   * 갱신 시작 시점에 복사하면 이미 새 값이 들어 있어 되돌릴 수 없다.
+   */
+  rememberHooksBeforeUpdate(): void {
+    // 여러 setter가 한 배치에 들어와도 시작 상태는 하나다. 첫 복사본만 유지한다.
+    if (this.hooksBeforeUpdate !== null) return;
+
+    this.hooksBeforeUpdate = this.hooks.map(copyHookSlot);
+  }
+
+  /**
+   * applyPatch 실패 시 슬롯 필드만 복사본의 값으로 되돌린다.
+   * setter가 슬롯 객체를 직접 참조하므로 배열이나 객체 동일성은 바꾸지 않는다.
+   */
+  restoreHooksBeforeUpdate(): void {
+    const snapshot = this.hooksBeforeUpdate;
+    if (snapshot === null) return;
+
+    for (let index = 0; index < snapshot.length; index += 1) {
+      const slot = this.hooks[index];
+      const saved = snapshot[index];
+      if (slot === undefined || saved === undefined) continue;
+
+      Object.assign(slot, saved);
+    }
+
+    this.discardHooksBeforeUpdate();
+  }
+
+  /** 성공한 갱신이 끝나면 복사본을 버려 다음 배치가 새 시작 상태를 복사하게 한다. */
+  discardHooksBeforeUpdate(): void {
+    this.hooksBeforeUpdate = null;
   }
 
   /**
@@ -191,26 +231,33 @@ class FunctionComponent {
       throw new Error('mount() 이전에는 update()를 실행할 수 없습니다');
     }
 
-    const nextRoot = createVRoot(renderComponent(this, 'update'));
-    const changes = diff(previousRoot, nextRoot);
+    try {
+      const nextRoot = createVRoot(renderComponent(this, 'update'));
+      const changes = diff(previousRoot, nextRoot);
 
-    // DOM 변경이 없으면 Patch는 생략하지만 event 동기화는 화면 데이터와 무관하게 수행한다.
-    if (changes.length > 0) {
-      applyPatchOrRestore(this, previousRoot, nextRoot, changes);
+      // DOM 변경이 없으면 Patch는 생략하지만 event 동기화는 화면 데이터와 무관하게 수행한다.
+      if (changes.length > 0) {
+        applyPatchOrRestore(this, previousRoot, nextRoot, changes);
+      }
+
+      syncEvents(nextRoot);
+
+      // 성공한 갱신만 현재 VDOM이 된다. 실패한 갱신은 마지막 성공 상태를 덮어쓰지 않는다.
+      this.currentVDOM = nextRoot;
+    } finally {
+      // 성공·실패 모두 이번 갱신의 복사본은 commit 경계에서 끝난다. applyPatch 실패는
+      // 예외를 전파하기 전에 복원을 마쳤으므로 여기서는 남은 복사본만 버린다.
+      this.discardHooksBeforeUpdate();
     }
 
-    syncEvents(nextRoot);
-
-    // 성공한 갱신만 현재 VDOM이 된다. 실패한 갱신은 마지막 성공 상태를 덮어쓰지 않는다.
-    this.currentVDOM = nextRoot;
-
-    // 화면 변경이 없어도 효과 판단은 생략하지 않는다. syncEvents까지 끝난 commit 뒤에 실행한다.
+    // effect 안 setter는 다음 갱신으로 이어진다. 복사본을 버린 뒤 실행해야 그 setter가
+    // 새 배치의 시작 상태를 복사할 수 있다. 화면 변경이 없어도 효과 판단은 생략하지 않는다.
     runEffects(this);
   }
 }
 
 /**
- * DOM 변경을 적용한다. 실패하면 마지막 성공 화면으로 전체 재생성한 뒤 원래 오류를 전파한다.
+ * DOM 변경을 적용한다. 실패하면 마지막 성공 화면과 내부 상태를 함께 되돌린 뒤 원래 오류를 전파한다.
  * 이 복구 경로에서는 event 동기화와 effect를 실행하지 않는다.
  */
 function applyPatchOrRestore(
@@ -222,9 +269,24 @@ function applyPatchOrRestore(
   try {
     applyPatch(previousRoot, nextRoot, changes);
   } catch (error) {
-    restoreLastCommittedRoot(instance, previousRoot);
+    restorePatchFailure(instance, previousRoot);
     throw error;
   }
+}
+
+/**
+ * 실패한 갱신의 화면과 내부 상태를 갱신 시작 전 시점으로 함께 되돌린다.
+ * 두 상태가 같은 시점을 가리켜야 다음 setter가 새 변경으로 예약된다.
+ */
+function restorePatchFailure(
+  instance: FunctionComponent,
+  previousRoot: VRoot
+): void {
+  restoreLastCommittedRoot(instance, previousRoot);
+  instance.restoreHooksBeforeUpdate();
+
+  // 복원 직후 다음 setter가 새 갱신을 예약할 수 있게 한다.
+  instance.updateScheduled = false;
 }
 
 function restoreLastCommittedRoot(
@@ -288,6 +350,14 @@ function claimHookSlot<T extends HookSlot>(
 
   instance.cursor += 1;
   return slot as T;
+}
+
+/**
+ * 슬롯 필드만 새 객체로 복사한다. 상태 값 자체는 참조를 유지하는 얕은 복사다.
+ * 값 객체를 제자리에서 바꾸는 사용은 React와 같은 불변 전제를 따르므로 지원하지 않는다.
+ */
+function copyHookSlot(slot: HookSlot): HookSlot {
+  return { ...slot };
 }
 
 function createStateHookSlot<T>(
@@ -466,6 +536,10 @@ function applyStateUpdate(
   // Object.is는 NaN을 같은 값으로, +0과 -0을 다른 값으로 판정한다.
   // 같은 값이면 슬롯도 쓰지 않고 갱신도 예약하지 않는다.
   if (Object.is(previous, value)) return;
+
+  // 되돌릴 기준은 setter가 값을 쓰기 전 상태다. 갱신이 시작된 뒤에 복사하면 이미 새 값이
+  // 들어 있으므로, 첫 setter에서 값 대입보다 먼저 이번 배치의 복사본을 만든다.
+  instance.rememberHooksBeforeUpdate();
 
   slot.value = value;
   scheduleUpdate(instance);

@@ -104,9 +104,7 @@ describe('ERR-02 applyPatch 실패는 마지막 성공 VDOM으로 복구하고 �
     let effectRuns = 0;
 
     function App() {
-      // 같은 문자열을 다시 넣으면 setter가 갱신을 예약하지 않으므로, 재시도도 새 값이 되도록
-      // 매 클릭에서 새 객체를 만든다. 화면에 보이는 데이터는 A와 B로 유지된다.
-      const [value, setValue] = useState({ label: 'A' });
+      const [value, setValue] = useState('A');
 
       useEffect(() => {
         effectRuns += 1;
@@ -115,8 +113,8 @@ describe('ERR-02 applyPatch 실패는 마지막 성공 VDOM으로 복구하고 �
       return h(
         'div',
         {},
-        h('span', {}, value.label),
-        h('button', { onClick: () => setValue({ label: 'B' }) }, 'next')
+        h('span', {}, value),
+        h('button', { onClick: () => setValue('B') }, 'next')
       );
     }
 
@@ -151,6 +149,51 @@ describe('ERR-02 applyPatch 실패는 마지막 성공 VDOM으로 복구하고 �
 
     expect(container.querySelector('span')!.textContent).toBe('B');
     expect(effectRuns).toBe(2);
+  });
+
+  it('실패한 갱신의 내부 State도 복원되어 같은 setter가 다시 새 변경으로 예약된다', async () => {
+    const failure = new Error('applyPatch failure');
+    let renders = 0;
+
+    function App() {
+      renders += 1;
+      const [value, setValue] = useState('A');
+
+      return h(
+        'div',
+        {},
+        h('span', {}, value),
+        h('button', { onClick: () => setValue('B') }, 'next')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(renders).toBe(1);
+
+    applyPatchMock.mockImplementationOnce(() => {
+      throw failure;
+    });
+
+    const { scheduled, restore } = captureScheduledUpdates();
+    try {
+      buttonByText(container, 'next').click();
+      expect(scheduled).toHaveLength(1);
+      expect(() => scheduled[0]!()).toThrow(failure);
+    } finally {
+      restore();
+    }
+
+    // 실패한 render는 실행됐지만 화면과 내부 State는 A로 돌아와 있다.
+    expect(renders).toBe(2);
+    expect(container.querySelector('span')!.textContent).toBe('A');
+
+    buttonByText(container, 'next').click();
+    await flushUpdates();
+
+    // State가 B로 남아 있었다면 같은 값이라 갱신이 예약되지 않아 render 횟수가 늘지 않는다.
+    expect(renders).toBe(3);
+    expect(container.querySelector('span')!.textContent).toBe('B');
   });
 });
 
