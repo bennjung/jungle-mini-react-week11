@@ -3,7 +3,9 @@
  * 아직 구현하지 않은 Hook은 호출 시 오류를 던져 테스트 실패 원인을 드러낸다.
  */
 import { propertySchema } from '../vdom/create';
-import { renderChildren } from '../vdom/patch';
+import { diff } from '../vdom/diff';
+import { syncEvents } from '../vdom/events';
+import { applyPatch, renderChildren } from '../vdom/patch';
 import type {
   VNode,
   VNodeAttribute,
@@ -19,6 +21,26 @@ type ClassifiedProps = {
   properties: VNodeProperties;
   events: VNodeEventMap;
 };
+
+type HookPhase = 'mount' | 'update';
+
+type HookKind = 'state' | 'memo' | 'effect';
+
+type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
+
+// Hook 기록은 호출 순서가 정체성이다. 같은 위치의 종류가 다르면 다른 Hook으로 바뀐 것이다.
+type StateHookSlot = {
+  kind: 'state';
+  value: unknown;
+  setter: StateSetter<unknown>;
+};
+
+// useMemo·useEffect의 값·deps 기록은 각 티켓(#58·#59)에서 이 자리에 채운다.
+type ReservedHookSlot = {
+  kind: Exclude<HookKind, 'state'>;
+};
+
+type HookSlot = StateHookSlot | ReservedHookSlot;
 
 // 이벤트 prop 이름은 사용자 표기(onClick)를, 값은 실제 DOM 이벤트 이름을 쓴다.
 const eventNameByProp: Readonly<Record<string, string>> = {
@@ -67,13 +89,20 @@ export function startApp(component: ComponentFunction, container: Element): void
   new FunctionComponent(component, container).mount();
 }
 
-export function useState<T>(
-  _initialValue: T
-): [T, (next: T | ((prev: T) => T)) => void] {
-  throw new Error('useState() is not implemented');
+export function useState<T>(initialValue: T): [T, StateSetter<T>] {
+  const instance = requireHookOwner('useState');
+  const slot = claimHookSlot(instance, 'state', () =>
+    createStateHookSlot(instance, initialValue)
+  );
+
+  return [slot.value as T, slot.setter as StateSetter<T>];
 }
 
 export function useMemo<T>(_calculate: () => T, _deps: unknown[]): T {
+  const instance = requireHookOwner('useMemo');
+
+  // 종류 검사는 useMemo 동작(#58) 이전에 공통 Hook 문맥 규칙으로 수행한다.
+  claimHookSlot(instance, 'memo', () => ({ kind: 'memo' }));
   throw new Error('useMemo() is not implemented');
 }
 
@@ -81,6 +110,10 @@ export function useEffect(
   _effect: () => void | (() => void),
   _deps?: unknown[]
 ): void {
+  const instance = requireHookOwner('useEffect');
+
+  // 종류 검사는 useEffect 동작(#59) 이전에 공통 Hook 문맥 규칙으로 수행한다.
+  claimHookSlot(instance, 'effect', () => ({ kind: 'effect' }));
   throw new Error('useEffect() is not implemented');
 }
 
@@ -90,10 +123,11 @@ export function useEffect(
 class FunctionComponent {
   readonly component: ComponentFunction;
   readonly container: Element;
-  // Hook 기록은 #57에서 이 자리에 채운다. 지금은 mount가 소비하지 않는다.
-  hooks: unknown[] = [];
+  hooks: HookSlot[] = [];
   cursor = 0;
+  phase: HookPhase = 'mount';
   currentVDOM: VRoot | null = null;
+  updateScheduled = false;
 
   constructor(component: ComponentFunction, container: Element) {
     this.component = component;
@@ -105,11 +139,36 @@ class FunctionComponent {
    * 컴포넌트 오류는 DOM을 건드리지 않고 호출자에게 전파된다.
    */
   mount(): void {
-    const root = createVRoot(renderComponent(this));
+    const root = createVRoot(renderComponent(this, 'mount'));
     renderChildren(root, this.container);
 
     // 성공한 렌더만 비교 기준이 된다. 실패한 렌더는 이전 화면을 덮어쓰지 않는다.
     this.currentVDOM = root;
+
+    // effect 실행은 commit 뒤 단계로 #59에서 추가한다.
+  }
+
+  /**
+   * 상태 변경 뒤 재렌더링. 단계마다 실패 지점과 성공 시점이 코드에서 바로 읽히게 한다.
+   */
+  update(): void {
+    const previousRoot = this.currentVDOM;
+    if (previousRoot === null) {
+      throw new Error('mount() 이전에는 update()를 실행할 수 없습니다');
+    }
+
+    const nextRoot = createVRoot(renderComponent(this, 'update'));
+    const changes = diff(previousRoot, nextRoot);
+
+    // DOM 변경이 없으면 Patch는 생략하지만 event 동기화는 화면 데이터와 무관하게 수행한다.
+    if (changes.length > 0) {
+      applyPatch(previousRoot, nextRoot, changes);
+    }
+
+    syncEvents(nextRoot);
+
+    // 성공한 갱신만 현재 VDOM이 된다. 실패한 갱신은 마지막 성공 상태를 덮어쓰지 않는다.
+    this.currentVDOM = nextRoot;
 
     // effect 실행은 commit 뒤 단계로 #59에서 추가한다.
   }
@@ -119,10 +178,132 @@ class FunctionComponent {
  * 컴포넌트를 실행하고 반환값을 VNode 목록으로 정규화한다.
  * DOM 생성 전에 검증하므로 잘못된 반환값이 부분 화면을 남기지 않는다.
  */
-function renderComponent(instance: FunctionComponent): VNode[] {
-  // Hook 문맥 연결과 cursor 초기화는 Hook 구현(#57)과 함께 이 단계에 들어온다.
-  const result = instance.component();
-  return normalizeComponentResult(result);
+function renderComponent(
+  instance: FunctionComponent,
+  phase: HookPhase
+): VNode[] {
+  beginHooks(instance, phase);
+
+  try {
+    const result = instance.component();
+    assertHookCountConsumed(instance, phase);
+    return normalizeComponentResult(result);
+  } finally {
+    endHooks();
+  }
+}
+
+// Hook 슬롯을 호출 순서대로 꺼내고, mount에서만 새 기록을 만든다.
+function claimHookSlot<T extends HookSlot>(
+  instance: FunctionComponent,
+  kind: HookKind,
+  create: () => T
+): T {
+  const index = instance.cursor;
+
+  if (index >= instance.hooks.length) {
+    // 개수가 늘어난 render는 같은 위치의 Hook 기록을 새로 만들 수 없다.
+    if (instance.phase !== 'mount') {
+      throw new Error(`render 사이에 Hook 개수가 늘었습니다: ${kind}`);
+    }
+
+    const slot = create();
+    instance.hooks.push(slot);
+    instance.cursor += 1;
+    return slot;
+  }
+
+  const slot = instance.hooks[index]!;
+  if (slot.kind !== kind) {
+    throw new Error(
+      `Hook 종류가 render 사이에 바뀌었습니다: ${slot.kind} → ${kind}`
+    );
+  }
+
+  instance.cursor += 1;
+  return slot as T;
+}
+
+function createStateHookSlot<T>(
+  instance: FunctionComponent,
+  initialValue: T
+): StateHookSlot {
+  const slot: StateHookSlot = {
+    kind: 'state',
+    value: initialValue,
+    // setter는 소유 인스턴스와 자기 슬롯을 기억해야 render가 바뀌어도 같은 기록을 갱신한다.
+    setter: (next) => {
+      applyStateUpdate(instance, slot, next);
+    }
+  };
+
+  return slot;
+}
+
+function applyStateUpdate(
+  instance: FunctionComponent,
+  slot: StateHookSlot,
+  next: unknown | ((prev: unknown) => unknown)
+): void {
+  const previous = slot.value;
+  const value =
+    typeof next === 'function'
+      ? (next as (prev: unknown) => unknown)(previous)
+      : next;
+
+  // Object.is는 NaN을 같은 값으로, +0과 -0을 다른 값으로 판정한다.
+  // 같은 값이면 슬롯도 쓰지 않고 갱신도 예약하지 않는다.
+  if (Object.is(previous, value)) return;
+
+  slot.value = value;
+  scheduleUpdate(instance);
+}
+
+function scheduleUpdate(instance: FunctionComponent): void {
+  // 인스턴스별 예약은 1회만 유지한다. 처리 중 들어온 setter는 현재 처리 뒤의
+  // microtask로 이어지므로 중첩 update를 만들지 않는다.
+  if (instance.updateScheduled) return;
+
+  instance.updateScheduled = true;
+  queueMicrotask(() => {
+    instance.updateScheduled = false;
+    instance.update();
+  });
+}
+
+let activeHookOwner: FunctionComponent | null = null;
+
+function beginHooks(instance: FunctionComponent, phase: HookPhase): void {
+  activeHookOwner = instance;
+  instance.cursor = 0;
+  instance.phase = phase;
+}
+
+function endHooks(): void {
+  // 오류가 나도 Hook 실행 문맥은 finally에서 해제한다. 오류 자체는 잡지 않는다.
+  activeHookOwner = null;
+}
+
+function requireHookOwner(hookName: string): FunctionComponent {
+  if (activeHookOwner === null) {
+    throw new Error(
+      `${hookName}()는 컴포넌트 실행 중에만 호출할 수 있습니다`
+    );
+  }
+
+  return activeHookOwner;
+}
+
+// update에서 모든 Hook 기록을 소비했는지 확인한다. 남은 기록은 개수가 줄었다는 뜻이다.
+function assertHookCountConsumed(
+  instance: FunctionComponent,
+  phase: HookPhase
+): void {
+  if (phase === 'update' && instance.cursor !== instance.hooks.length) {
+    throw new Error(
+      `render 사이에 Hook 개수가 줄었습니다: ${instance.hooks.length} → ${instance.cursor}`
+    );
+  }
 }
 
 /**

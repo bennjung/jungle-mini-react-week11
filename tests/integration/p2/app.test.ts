@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 import { h, startApp, useEffect, useState } from '../../../src/component';
+import { syncEvents } from '../../../src/vdom/events';
 import { applyPatch } from '../../../src/vdom/patch';
 import {
   buttonByText,
@@ -14,11 +15,18 @@ vi.mock('../../../src/vdom/patch', async (importOriginal) => {
   return { ...actual, applyPatch: vi.fn(actual.applyPatch) };
 });
 
+vi.mock('../../../src/vdom/events', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('../../../src/vdom/events')>();
+  return { ...actual, syncEvents: vi.fn(actual.syncEvents) };
+});
+
 const applyPatchMock = vi.mocked(applyPatch);
+const syncEventsMock = vi.mocked(syncEvents);
 
 beforeEach(() => {
   resetBody();
   applyPatchMock.mockClear();
+  syncEventsMock.mockClear();
 });
 
 afterEach(resetBody);
@@ -223,6 +231,8 @@ describe('UPD-02 화면 데이터가 같으면 applyPatch를 호출하지 않는
 
     expect(renders).toBe(2);
     expect(applyPatchMock).not.toHaveBeenCalled();
+    // 화면 데이터가 같아도 handler 동기화는 생략하지 않는다.
+    expect(syncEventsMock).toHaveBeenCalledTimes(1);
     expect(container.querySelector('span')).toBe(span);
   });
 });
@@ -250,6 +260,8 @@ describe('UPD-03 화면이 같아도 handler가 바뀌면 새 handler가 실행�
     await flushUpdates();
 
     expect(applyPatchMock).not.toHaveBeenCalled();
+    // DOM 변경이 없어도 새 handler 연결을 위해 event 동기화는 수행된다.
+    expect(syncEventsMock).toHaveBeenCalledTimes(1);
     expect(buttonByText(container, '실행')).toBe(run);
 
     run.click();

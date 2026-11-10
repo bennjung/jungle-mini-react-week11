@@ -201,49 +201,110 @@ describe('HOOK-07 Component 실행 밖에서 Hook을 호출하면 오류다', ()
 });
 
 describe('HOOK-08 Hook 개수나 종류가 render 사이에 바뀌면 오류다', () => {
-  it('개수가 줄어드는 render는 화면을 바꾸지 않는다', async () => {
-    function App() {
-      const [flag, setFlag] = useState(true);
-      if (flag) {
-        useState(0);
+  it('개수가 줄어드는 render는 화면을 바꾸지 않는다', () => {
+    const scheduled: VoidFunction[] = [];
+    const queueMicrotaskSpy = vi
+      .spyOn(globalThis, 'queueMicrotask')
+      .mockImplementation((callback) => {
+        scheduled.push(callback);
+      });
+
+    try {
+      function App() {
+        const [flag, setFlag] = useState(true);
+        if (flag) {
+          useState(0);
+        }
+
+        return h('div', {}, h('button', { onClick: () => setFlag(false) }, 'off'));
       }
 
-      return h('div', {}, h('button', { onClick: () => setFlag(false) }, 'off'));
+      const container = createContainer();
+      startApp(App, container);
+      const button = buttonByText(container, 'off');
+
+      button.click();
+
+      // 예약된 갱신 오류를 테스트가 직접 실행해 잡는다. unhandled error로 새지 않게 한다.
+      expect(scheduled).toHaveLength(1);
+      expect(() => scheduled[0]!()).toThrow();
+
+      expect(container.contains(button)).toBe(true);
+      expect(container.textContent).toBe('off');
+    } finally {
+      queueMicrotaskSpy.mockRestore();
     }
-
-    const container = createContainer();
-    startApp(App, container);
-    const button = buttonByText(container, 'off');
-
-    button.click();
-    await flushUpdates();
-
-    expect(container.contains(button)).toBe(true);
-    expect(container.textContent).toBe('off');
   });
 
-  it('같은 위치의 Hook 종류가 바뀌어도 화면을 바꾸지 않는다', async () => {
-    function App() {
-      const [flag, setFlag] = useState(true);
+  it('개수가 늘어나는 render도 화면을 바꾸지 않는다', () => {
+    const scheduled: VoidFunction[] = [];
+    const queueMicrotaskSpy = vi
+      .spyOn(globalThis, 'queueMicrotask')
+      .mockImplementation((callback) => {
+        scheduled.push(callback);
+      });
 
-      if (flag) {
-        useState(0);
-      } else {
-        useMemo(() => 0, []);
+    try {
+      function App() {
+        const [flag, setFlag] = useState(false);
+        if (flag) {
+          useState(0);
+        }
+
+        return h('div', {}, h('button', { onClick: () => setFlag(true) }, 'on'));
       }
 
-      return h('div', {}, h('button', { onClick: () => setFlag(false) }, 'switch'));
+      const container = createContainer();
+      startApp(App, container);
+      const button = buttonByText(container, 'on');
+
+      button.click();
+
+      expect(scheduled).toHaveLength(1);
+      expect(() => scheduled[0]!()).toThrow();
+
+      expect(container.contains(button)).toBe(true);
+      expect(container.textContent).toBe('on');
+    } finally {
+      queueMicrotaskSpy.mockRestore();
     }
+  });
 
-    const container = createContainer();
-    startApp(App, container);
-    const button = buttonByText(container, 'switch');
+  it('같은 위치의 Hook 종류가 바뀌어도 화면을 바꾸지 않는다', () => {
+    const scheduled: VoidFunction[] = [];
+    const queueMicrotaskSpy = vi
+      .spyOn(globalThis, 'queueMicrotask')
+      .mockImplementation((callback) => {
+        scheduled.push(callback);
+      });
 
-    button.click();
-    await flushUpdates();
+    try {
+      function App() {
+        const [flag, setFlag] = useState(true);
 
-    expect(container.contains(button)).toBe(true);
-    expect(container.textContent).toBe('switch');
+        if (flag) {
+          useState(0);
+        } else {
+          useMemo(() => 0, []);
+        }
+
+        return h('div', {}, h('button', { onClick: () => setFlag(false) }, 'switch'));
+      }
+
+      const container = createContainer();
+      startApp(App, container);
+      const button = buttonByText(container, 'switch');
+
+      button.click();
+
+      expect(scheduled).toHaveLength(1);
+      expect(() => scheduled[0]!()).toThrow();
+
+      expect(container.contains(button)).toBe(true);
+      expect(container.textContent).toBe('switch');
+    } finally {
+      queueMicrotaskSpy.mockRestore();
+    }
   });
 });
 
@@ -305,6 +366,42 @@ describe('HOOK-09 같은 값을 넣는 setter는 갱신을 예약하지 않는�
     await flushUpdates();
 
     expect(renders).toBe(1);
+  });
+
+  it('+0/-0은 다른 값, 같은 참조는 같은 값, 같은 내용의 새 객체는 다른 값으로 판정한다', async () => {
+    const shared = { value: 1 };
+    let renders = 0;
+
+    function App() {
+      renders += 1;
+      const [zero, setZero] = useState(0);
+      const [, setObject] = useState(shared);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, Object.is(zero, -0) ? '-0' : '0'),
+        h('button', { onClick: () => setZero(-0) }, 'negative-zero'),
+        h('button', { onClick: () => setObject(shared) }, 'same-reference'),
+        h('button', { onClick: () => setObject({ value: 1 }) }, 'new-object')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    buttonByText(container, 'same-reference').click();
+    await flushUpdates();
+    expect(renders).toBe(1);
+
+    buttonByText(container, 'negative-zero').click();
+    await flushUpdates();
+    expect(renders).toBe(2);
+    expect(textNodes(container)).toEqual(['-0']);
+
+    buttonByText(container, 'new-object').click();
+    await flushUpdates();
+    expect(renders).toBe(3);
   });
 });
 
