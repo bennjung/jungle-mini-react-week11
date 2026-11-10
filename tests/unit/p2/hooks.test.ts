@@ -125,6 +125,36 @@ describe('HOOK-04 useMemo가 의존성이 같으면 다시 계산하지 않는�
     expect(textNodes(container)).toEqual(['B', '4']);
     expect(calculateCalls).toBe(1);
   });
+
+  it('계산 결과가 undefined여도 의존성이 같으면 캐시를 재사용한다', async () => {
+    let calculateCalls = 0;
+
+    function App() {
+      const [label, setLabel] = useState('A');
+      const value = useMemo(() => {
+        calculateCalls += 1;
+        return undefined;
+      }, []);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, `${label}:${String(value)}`),
+        h('button', { onClick: () => setLabel('B') }, 'label')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(textNodes(container)).toEqual(['A:undefined']);
+    expect(calculateCalls).toBe(1);
+
+    buttonByText(container, 'label').click();
+    await flushUpdates();
+
+    expect(textNodes(container)).toEqual(['B:undefined']);
+    expect(calculateCalls).toBe(1);
+  });
 });
 
 describe('HOOK-05 useMemo가 의존성이 바뀌면 다시 계산한다', () => {
@@ -156,6 +186,117 @@ describe('HOOK-05 useMemo가 의존성이 바뀌면 다시 계산한다', () => 
     expect(calculateCalls).toBe(2);
     expect(textNodes(container)).toEqual(['4']);
   });
+
+  it('의존성 배열 길이가 바뀌면 다시 계산한다', async () => {
+    let calculateCalls = 0;
+
+    function App() {
+      const [expanded, setExpanded] = useState(false);
+      const deps = expanded ? [1, 2] : [1];
+      const length = useMemo(() => {
+        calculateCalls += 1;
+        return deps.length;
+      }, deps);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, String(length)),
+        h('button', { onClick: () => setExpanded(true) }, 'expand')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(calculateCalls).toBe(1);
+    expect(textNodes(container)).toEqual(['1']);
+
+    buttonByText(container, 'expand').click();
+    await flushUpdates();
+
+    expect(calculateCalls).toBe(2);
+    expect(textNodes(container)).toEqual(['2']);
+  });
+
+  it('의존성 배열 순서가 바뀌면 다시 계산한다', async () => {
+    let calculateCalls = 0;
+
+    function App() {
+      const [swapped, setSwapped] = useState(false);
+      const deps = swapped ? ['b', 'a'] : ['a', 'b'];
+      const joined = useMemo(() => {
+        calculateCalls += 1;
+        return deps.join('');
+      }, deps);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, joined),
+        h('button', { onClick: () => setSwapped(true) }, 'swap')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(calculateCalls).toBe(1);
+    expect(textNodes(container)).toEqual(['ab']);
+
+    buttonByText(container, 'swap').click();
+    await flushUpdates();
+
+    expect(calculateCalls).toBe(2);
+    expect(textNodes(container)).toEqual(['ba']);
+  });
+
+  it('같은 내용의 새 객체 의존성은 참조가 달라 다시 계산한다', async () => {
+    let calculateCalls = 0;
+
+    function App() {
+      const [config, setConfig] = useState({ size: 2 });
+      const area = useMemo(() => {
+        calculateCalls += 1;
+        return config.size * config.size;
+      }, [config]);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, String(area)),
+        h('button', { onClick: () => setConfig({ size: 2 }) }, 'replace')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(calculateCalls).toBe(1);
+
+    buttonByText(container, 'replace').click();
+    await flushUpdates();
+
+    expect(calculateCalls).toBe(2);
+    expect(textNodes(container)).toEqual(['4']);
+  });
+});
+
+describe('HOOK-04·05 useMemo 의존성 배열 검증', () => {
+  it.each([undefined, null, 0, 'count', { length: 1 }])(
+    'deps가 배열이 아니면 오류다: %s',
+    (deps) => {
+      let rendered = false;
+
+      function App() {
+        useMemo(() => 1, deps as unknown as unknown[]);
+        rendered = true;
+        return h('div', {}, 'ok');
+      }
+
+      const container = createContainer();
+      expect(() => startApp(App, container)).toThrow(/deps/);
+      expect(rendered).toBe(false);
+      expect(container.textContent).toBe('');
+    }
+  );
 });
 
 describe('HOOK-06 useEffect가 commit 뒤 실행되고 의존성이 같으면 다시 실행하지 않는다', () => {
@@ -197,6 +338,20 @@ describe('HOOK-07 Component 실행 밖에서 Hook을 호출하면 오류다', ()
     }
 
     expect(() => outside()).toThrow();
+  });
+
+  it('useMemo도 컴포넌트 실행 밖 호출은 오류다', () => {
+    let calculateCalls = 0;
+
+    function outside(): void {
+      useMemo(() => {
+        calculateCalls += 1;
+        return 1;
+      }, []);
+    }
+
+    expect(() => outside()).toThrow();
+    expect(calculateCalls).toBe(0);
   });
 });
 

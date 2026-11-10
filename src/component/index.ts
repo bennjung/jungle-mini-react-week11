@@ -35,12 +35,19 @@ type StateHookSlot = {
   setter: StateSetter<unknown>;
 };
 
-// useMemo·useEffect의 값·deps 기록은 각 티켓(#58·#59)에서 이 자리에 채운다.
-type ReservedHookSlot = {
-  kind: Exclude<HookKind, 'state'>;
+// useMemo는 결과와 그 결과를 만든 deps를 함께 보관해야 다음 render에서 재사용 여부를 판단한다.
+type MemoHookSlot = {
+  kind: 'memo';
+  value: unknown;
+  deps: readonly unknown[];
 };
 
-type HookSlot = StateHookSlot | ReservedHookSlot;
+// useEffect의 실행 후보·deps 기록은 #59에서 이 자리에 채운다.
+type EffectHookSlot = {
+  kind: 'effect';
+};
+
+type HookSlot = StateHookSlot | MemoHookSlot | EffectHookSlot;
 
 // 이벤트 prop 이름은 사용자 표기(onClick)를, 값은 실제 DOM 이벤트 이름을 쓴다.
 const eventNameByProp: Readonly<Record<string, string>> = {
@@ -98,12 +105,19 @@ export function useState<T>(initialValue: T): [T, StateSetter<T>] {
   return [slot.value as T, slot.setter as StateSetter<T>];
 }
 
-export function useMemo<T>(_calculate: () => T, _deps: unknown[]): T {
+export function useMemo<T>(calculate: () => T, deps: readonly unknown[]): T {
   const instance = requireHookOwner('useMemo');
+  const nextDeps = assertMemoDependencies(deps);
 
-  // 종류 검사는 useMemo 동작(#58) 이전에 공통 Hook 문맥 규칙으로 수행한다.
-  claimHookSlot(instance, 'memo', () => ({ kind: 'memo' }));
-  throw new Error('useMemo() is not implemented');
+  // mount에서는 기록 생성과 첫 계산을 함께 끝낸다. 계산이 실패하면 기록도 남지 않는다.
+  const slot = claimHookSlot(instance, 'memo', () =>
+    createMemoHookSlot(calculate, nextDeps)
+  );
+
+  // mount에서 방금 만든 기록은 같은 deps를 가지므로 이 비교를 그대로 통과한다.
+  if (areHookDepsEqual(slot.deps, nextDeps)) return slot.value as T;
+
+  return updateMemoHookSlot(slot, calculate, nextDeps);
 }
 
 export function useEffect(
@@ -238,6 +252,53 @@ function createStateHookSlot<T>(
   };
 
   return slot;
+}
+
+function assertMemoDependencies(deps: unknown): readonly unknown[] {
+  // useMemo의 deps는 생략할 수 없다. 생략(undefined)과 비배열을 같은 검사로 거른다.
+  if (!Array.isArray(deps)) {
+    throw new Error(`useMemo의 deps는 배열이어야 합니다: ${describeValue(deps)}`);
+  }
+
+  return deps;
+}
+
+function areHookDepsEqual(
+  previous: readonly unknown[],
+  next: readonly unknown[]
+): boolean {
+  // deps 배열은 render마다 새로 만들어지므로 배열 참조가 아니라 길이와 각 값을 비교한다.
+  // Object.is는 useState의 값 비교와 같은 규칙(NaN 동일, +0/-0 구분)을 쓴다.
+  if (previous.length !== next.length) return false;
+
+  for (let index = 0; index < next.length; index += 1) {
+    if (!Object.is(previous[index], next[index])) return false;
+  }
+
+  return true;
+}
+
+function createMemoHookSlot<T>(
+  calculate: () => T,
+  deps: readonly unknown[]
+): MemoHookSlot {
+  // 계산이 끝난 뒤에만 기록을 만들므로 첫 render의 계산 오류가 빈 기록을 남기지 않는다.
+  return { kind: 'memo', value: calculate(), deps };
+}
+
+function updateMemoHookSlot<T>(
+  slot: MemoHookSlot,
+  calculate: () => T,
+  deps: readonly unknown[]
+): T {
+  const value = calculate();
+
+  // 계산이 성공한 뒤에만 기록을 바꾼다. 실패한 계산의 deps가 남으면 다음 render가
+  // 실제로 만들어지지 않은 결과를 캐시로 신뢰하게 된다.
+  slot.value = value;
+  slot.deps = deps;
+
+  return value;
 }
 
 function applyStateUpdate(
