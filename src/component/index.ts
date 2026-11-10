@@ -28,6 +28,10 @@ type HookKind = 'state' | 'memo' | 'effect';
 
 type StateSetter<T> = (next: T | ((prev: T) => T)) => void;
 
+type EffectCleanup = () => void;
+
+type EffectHandler = () => void | EffectCleanup;
+
 // Hook 기록은 호출 순서가 정체성이다. 같은 위치의 종류가 다르면 다른 Hook으로 바뀐 것이다.
 type StateHookSlot = {
   kind: 'state';
@@ -42,9 +46,15 @@ type MemoHookSlot = {
   deps: readonly unknown[];
 };
 
-// useEffect의 실행 후보·deps 기록은 #59에서 이 자리에 채운다.
+// useEffect는 이번 render의 실행 후보와 마지막으로 실행된 기준을 분리해 보관한다.
+// commit이 실패하면 후보를 소비하지 않고, 성공한 실행만 다음 비교의 기준이 된다.
 type EffectHookSlot = {
   kind: 'effect';
+  effect: EffectHandler;
+  deps: readonly unknown[] | undefined;
+  nextDeps: readonly unknown[] | undefined;
+  cleanup: EffectCleanup | null;
+  shouldRun: boolean;
 };
 
 type HookSlot = StateHookSlot | MemoHookSlot | EffectHookSlot;
@@ -121,14 +131,22 @@ export function useMemo<T>(calculate: () => T, deps: readonly unknown[]): T {
 }
 
 export function useEffect(
-  _effect: () => void | (() => void),
-  _deps?: unknown[]
+  effect: EffectHandler,
+  deps?: readonly unknown[]
 ): void {
   const instance = requireHookOwner('useEffect');
+  const nextDeps = assertEffectDependencies(deps);
+  const isMounting = instance.phase === 'mount';
 
-  // 종류 검사는 useEffect 동작(#59) 이전에 공통 Hook 문맥 규칙으로 수행한다.
-  claimHookSlot(instance, 'effect', () => ({ kind: 'effect' }));
-  throw new Error('useEffect() is not implemented');
+  const slot = claimHookSlot(instance, 'effect', () =>
+    createEffectHookSlot(effect, nextDeps)
+  );
+
+  // mount에서 만든 기록은 이번 commit 뒤에 첫 실행을 기다린다. 여기서 다시 비교하면
+  // 방금 기록한 deps와 같아져 첫 실행을 잃는다.
+  if (isMounting) return;
+
+  registerEffectForCommit(slot, effect, nextDeps);
 }
 
 /**
@@ -159,7 +177,8 @@ class FunctionComponent {
     // 성공한 렌더만 비교 기준이 된다. 실패한 렌더는 이전 화면을 덮어쓰지 않는다.
     this.currentVDOM = root;
 
-    // effect 실행은 commit 뒤 단계로 #59에서 추가한다.
+    // 효과는 VDOM 교체까지 끝난 성공한 commit 뒤에 실행한다.
+    runEffects(this);
   }
 
   /**
@@ -184,7 +203,8 @@ class FunctionComponent {
     // 성공한 갱신만 현재 VDOM이 된다. 실패한 갱신은 마지막 성공 상태를 덮어쓰지 않는다.
     this.currentVDOM = nextRoot;
 
-    // effect 실행은 commit 뒤 단계로 #59에서 추가한다.
+    // 화면 변경이 없어도 효과 판단은 생략하지 않는다. syncEvents까지 끝난 commit 뒤에 실행한다.
+    runEffects(this);
   }
 }
 
@@ -299,6 +319,105 @@ function updateMemoHookSlot<T>(
   slot.deps = deps;
 
   return value;
+}
+
+function createEffectHookSlot(
+  effect: EffectHandler,
+  deps: readonly unknown[] | undefined
+): EffectHookSlot {
+  // deps는 효과가 성공적으로 실행된 뒤에 기록한다. mount의 첫 실행은 runEffects가 맡는다.
+  return {
+    kind: 'effect',
+    effect,
+    deps: undefined,
+    nextDeps: deps,
+    cleanup: null,
+    shouldRun: true
+  };
+}
+
+function assertEffectDependencies(
+  deps: unknown
+): readonly unknown[] | undefined {
+  // deps 생략은 "매 render 실행"이라는 뜻이므로 undefined만 허용한다.
+  if (deps === undefined) return undefined;
+
+  if (!Array.isArray(deps)) {
+    throw new Error(
+      `useEffect의 deps는 배열이거나 생략해야 합니다: ${describeValue(deps)}`
+    );
+  }
+
+  return deps;
+}
+
+function registerEffectForCommit(
+  slot: EffectHookSlot,
+  effect: EffectHandler,
+  nextDeps: readonly unknown[] | undefined
+): void {
+  // 이번 render의 효과와 deps를 후보로 남기고, commit 뒤 실행 여부만 지금 판단한다.
+  slot.effect = effect;
+  slot.nextDeps = nextDeps;
+  slot.shouldRun = shouldRunEffect(slot, nextDeps);
+}
+
+function shouldRunEffect(
+  slot: EffectHookSlot,
+  nextDeps: readonly unknown[] | undefined
+): boolean {
+  // deps를 생략한 효과는 비교 기준 없이 매 render 실행한다.
+  if (nextDeps === undefined) return true;
+
+  // 이전 실행이 deps 없이 끝났다면 비교할 배열이 없다. 이번 render부터 새 기준을 만든다.
+  if (slot.deps === undefined) return true;
+
+  return !areHookDepsEqual(slot.deps, nextDeps);
+}
+
+function runEffects(instance: FunctionComponent): void {
+  // Hook 호출 순서가 효과의 실행·정리 순서다. 각 효과의 cleanup과 실행 사이에
+  // 다음 효과를 끼워 넣지 않고, 오류가 나면 남은 효과는 실행하지 않는다.
+  for (const slot of instance.hooks) {
+    if (slot.kind !== 'effect' || !slot.shouldRun) continue;
+    runEffectSlot(slot);
+  }
+}
+
+function runEffectSlot(slot: EffectHookSlot): void {
+  runEffectCleanup(slot);
+
+  const cleanup = invokeEffect(slot.effect);
+
+  // 실행이 성공한 뒤에만 비교 기준을 갱신한다. 실패한 효과의 deps가 남으면
+  // 다음 render가 실행되지 않은 효과를 최신으로 오해한다.
+  slot.cleanup = cleanup;
+  slot.deps = slot.nextDeps;
+  slot.shouldRun = false;
+}
+
+function runEffectCleanup(slot: EffectHookSlot): void {
+  const cleanup = slot.cleanup;
+  if (cleanup === null) return;
+
+  // cleanup을 다시 실행하지 않도록 호출 전에 비운다. cleanup 오류는 잡지 않고 전파한다.
+  slot.cleanup = null;
+  cleanup();
+}
+
+function invokeEffect(effect: EffectHandler): EffectCleanup | null {
+  const cleanup = effect();
+
+  if (cleanup === undefined) return null;
+
+  // async effect의 Promise나 `return setInterval(...)`의 숫자를 cleanup으로 저장하지 않는다.
+  if (typeof cleanup !== 'function') {
+    throw new Error(
+      `useEffect의 반환값은 cleanup 함수 또는 undefined여야 합니다: ${describeValue(cleanup)}`
+    );
+  }
+
+  return cleanup;
 }
 
 function applyStateUpdate(

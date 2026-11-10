@@ -329,6 +329,39 @@ describe('HOOK-06 useEffect가 commit 뒤 실행되고 의존성이 같으면 �
     expect(textNodes(container)).toEqual(['B']);
     expect(effectCalls).toBe(1);
   });
+
+  it('의존성이 같으면 cleanup도 실행하지 않는다', async () => {
+    const log: string[] = [];
+
+    function App() {
+      const [count] = useState(0);
+      const [label, setLabel] = useState('A');
+
+      useEffect(() => {
+        log.push('run');
+        return () => {
+          log.push('cleanup');
+        };
+      }, [count]);
+
+      return h(
+        'div',
+        {},
+        h('span', {}, label),
+        h('button', { onClick: () => setLabel('B') }, 'label')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(log).toEqual(['run']);
+
+    buttonByText(container, 'label').click();
+    await flushUpdates();
+
+    expect(textNodes(container)).toEqual(['B']);
+    expect(log).toEqual(['run']);
+  });
 });
 
 describe('HOOK-07 Component 실행 밖에서 Hook을 호출하면 오류다', () => {
@@ -584,6 +617,177 @@ describe('EFF-01 의존성이 바뀌면 이전 cleanup이 새 effect보다 먼�
     buttonByText(container, 'inc').click();
     await flushUpdates();
 
+    expect(log).toEqual(['run0', 'cleanup0', 'run1']);
+  });
+});
+
+describe('EFF-01 deps 생략은 매 render 실행과 매번 cleanup을 뜻한다', () => {
+  it('화면이 바뀔 때마다 이전 cleanup 뒤에 다시 실행된다', async () => {
+    const log: string[] = [];
+    let renders = 0;
+
+    function App() {
+      const [label, setLabel] = useState('A');
+      renders += 1;
+      const renderNumber = renders;
+
+      useEffect(() => {
+        log.push(`run${renderNumber}`);
+        return () => {
+          log.push(`cleanup${renderNumber}`);
+        };
+      });
+
+      return h(
+        'div',
+        {},
+        h('span', {}, label),
+        h('button', { onClick: () => setLabel('B') }, 'next')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(log).toEqual(['run1']);
+
+    buttonByText(container, 'next').click();
+    await flushUpdates();
+
+    expect(textNodes(container)).toEqual(['B']);
+    expect(log).toEqual(['run1', 'cleanup1', 'run2']);
+  });
+});
+
+describe('EFF-01 여러 효과는 호출 순서대로 각각 cleanup 후 새 효과를 실행한다', () => {
+  it('첫 효과의 cleanup과 실행이 끝난 뒤 두 번째 효과를 처리한다', async () => {
+    const log: string[] = [];
+
+    function App() {
+      const [count, setCount] = useState(0);
+
+      useEffect(() => {
+        log.push(`first-run${count}`);
+        return () => {
+          log.push(`first-cleanup${count}`);
+        };
+      }, [count]);
+
+      useEffect(() => {
+        log.push(`second-run${count}`);
+        return () => {
+          log.push(`second-cleanup${count}`);
+        };
+      }, [count]);
+
+      return h('div', {}, h('button', { onClick: () => setCount(count + 1) }, 'inc'));
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    expect(log).toEqual(['first-run0', 'second-run0']);
+
+    buttonByText(container, 'inc').click();
+    await flushUpdates();
+
+    expect(log).toEqual([
+      'first-run0',
+      'second-run0',
+      'first-cleanup0',
+      'first-run1',
+      'second-cleanup0',
+      'second-run1'
+    ]);
+  });
+});
+
+describe('EFF-01 useEffect deps는 배열이거나 생략해야 한다', () => {
+  it.each([null, 0, 'count', { length: 1 }])(
+    'deps가 배열이 아니면 오류다: %s',
+    (deps) => {
+      let rendered = false;
+
+      function App() {
+        useEffect(() => {}, deps as unknown as unknown[]);
+        rendered = true;
+        return h('div', {}, 'ok');
+      }
+
+      const container = createContainer();
+      expect(() => startApp(App, container)).toThrow(/deps/);
+      expect(rendered).toBe(false);
+      expect(container.textContent).toBe('');
+    }
+  );
+});
+
+describe('EFF-01 useEffect의 반환값은 cleanup 함수 또는 undefined여야 한다', () => {
+  it('async effect가 돌려주는 Promise는 등록 시점에 오류다', () => {
+    function App() {
+      const asyncEffect = (async () => {}) as unknown as () => void;
+      useEffect(asyncEffect, []);
+      return h('div', {}, 'ok');
+    }
+
+    const container = createContainer();
+    expect(() => startApp(App, container)).toThrow(/cleanup/);
+  });
+
+  it('숫자 반환은 오류다', () => {
+    function App() {
+      const numberEffect = (() => 1) as unknown as () => void;
+      useEffect(numberEffect, []);
+      return h('div', {}, 'ok');
+    }
+
+    const container = createContainer();
+    expect(() => startApp(App, container)).toThrow(/cleanup/);
+  });
+
+  it('효과 오류 뒤에 남은 효과는 실행하지 않는다', () => {
+    let secondRuns = 0;
+
+    function App() {
+      const numberEffect = (() => 1) as unknown as () => void;
+      useEffect(numberEffect, []);
+      useEffect(() => {
+        secondRuns += 1;
+      }, []);
+
+      return h('div', {}, 'ok');
+    }
+
+    const container = createContainer();
+    expect(() => startApp(App, container)).toThrow(/cleanup/);
+    expect(secondRuns).toBe(0);
+  });
+});
+
+describe('EFF-01 화면 변경이 없어도 효과 판단은 생략하지 않는다', () => {
+  it('고정된 화면에서 deps만 바뀌면 cleanup과 실행이 이어진다', async () => {
+    const log: string[] = [];
+
+    function App() {
+      const [count, setCount] = useState(0);
+
+      useEffect(() => {
+        log.push(`run${count}`);
+        return () => {
+          log.push(`cleanup${count}`);
+        };
+      }, [count]);
+
+      return h('div', {}, h('button', { onClick: () => setCount(count + 1) }, 'fixed'));
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+    const button = buttonByText(container, 'fixed');
+
+    button.click();
+    await flushUpdates();
+
+    expect(container.contains(button)).toBe(true);
+    expect(container.textContent).toBe('fixed');
     expect(log).toEqual(['run0', 'cleanup0', 'run1']);
   });
 });
