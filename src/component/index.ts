@@ -7,6 +7,7 @@ import { diff } from '../vdom/diff';
 import { syncEvents } from '../vdom/events';
 import { applyPatch, renderChildren } from '../vdom/patch';
 import type {
+  DiffCommand,
   VNode,
   VNodeAttribute,
   VNodeEventMap,
@@ -195,7 +196,7 @@ class FunctionComponent {
 
     // DOM 변경이 없으면 Patch는 생략하지만 event 동기화는 화면 데이터와 무관하게 수행한다.
     if (changes.length > 0) {
-      applyPatch(previousRoot, nextRoot, changes);
+      applyPatchOrRestore(this, previousRoot, nextRoot, changes);
     }
 
     syncEvents(nextRoot);
@@ -205,6 +206,37 @@ class FunctionComponent {
 
     // 화면 변경이 없어도 효과 판단은 생략하지 않는다. syncEvents까지 끝난 commit 뒤에 실행한다.
     runEffects(this);
+  }
+}
+
+/**
+ * DOM 변경을 적용한다. 실패하면 마지막 성공 화면으로 전체 재생성한 뒤 원래 오류를 전파한다.
+ * 이 복구 경로에서는 event 동기화와 effect를 실행하지 않는다.
+ */
+function applyPatchOrRestore(
+  instance: FunctionComponent,
+  previousRoot: VRoot,
+  nextRoot: VRoot,
+  changes: DiffCommand[]
+): void {
+  try {
+    applyPatch(previousRoot, nextRoot, changes);
+  } catch (error) {
+    restoreLastCommittedRoot(instance, previousRoot);
+    throw error;
+  }
+}
+
+function restoreLastCommittedRoot(
+  instance: FunctionComponent,
+  previousRoot: VRoot
+): void {
+  try {
+    // renderChildren은 마지막 성공 VDOM의 VNode.dom을 새 DOM으로 다시 연결한다.
+    // 그래야 다음 갱신의 diff가 방금 복구한 실제 화면을 기준으로 비교할 수 있다.
+    renderChildren(previousRoot, instance.container);
+  } catch {
+    // 복구 중 오류는 원래 반영 오류를 가리지 않는다. 이후 동작은 보장하지 않는다.
   }
 }
 
