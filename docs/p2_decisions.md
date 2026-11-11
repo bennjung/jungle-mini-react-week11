@@ -274,6 +274,9 @@
 
 ## P2-DEMO-SIGNUP-01 — 고양이·회원가입 단일 페이지 입력 시연
 
+- **후속 상태:** 아래는 관찰 데모 작성 당시의 결정·검증 기록이다. 불일치·커서 끝 이동을
+  기대하던 데모 테스트는 P2-INPUT-TEST-01에서 사용자 승인된 정상 동작 기대값으로 대체했다.
+  엔진 동작은 아직 변경하지 않았으므로 후속 테스트 통과를 뜻하지 않는다.
 - **사용자 승인:** 고양이를 유지하고 회원가입 버튼을 연결한다. 이메일 공백 제거의 엣지 케이스를 보여준다. 별도 HTML로 이동하지 않고 같은 페이지에서 VDOM 갱신을 시연한다.
 - **선택:** 기존 고양이 루트에 화면·이메일 State를 둔다. 회원가입 자식은 props만 사용한다. 모든 Hook은 화면 분기 전에 같은 순서로 호출한다. 기존 공개 h/startApp/useState/useEffect와 Diff·Patch를 재사용하고 엔진은 변경하지 않는다.
 - **전환·수명:** 문서 이동 없이 같은 #app에서 화면을 전환한다. 고양이 State는 유지하며 pointer listener는 화면 전환 시 정리하고 돌아오면 다시 연결한다. 이메일 관찰 listener도 전환 시 정리한다.
@@ -284,6 +287,82 @@
 - **최종 검증:** `npm run check` 타입 검사와 27개 파일·297개 테스트 통과(기존 293개 + 데모 4개). 실제 Chromium에서 같은 문서(timeOrigin)·같은 #app 참조 유지, 공백 제거 붙여넣기, 중간 공백 입력 시 State/DOM 불일치, 중간 ` x ` 삽입 시 `caxt@example.com`과 커서 5→16 이동을 확인했다. 실제 한글 조합·모든 브라우저·실제 회원가입은 검증하지 않았다.
 - **README:** 다른 작업에서 재구성된 본문을 보존하고 전화번호 예시·데모만 회원가입 이메일로 동기화했다. 기존 전체 흐름 그림은 가로 배치로 바꿨다. Phase 1 수정 제한 문서는 변경하지 않는다.
 
+## P2-INPUT-TEST-01 — 입력 동기화·선택 영역 테스트 선행 계약
+
+- **상태:** 테스트 선행 당시의 기록. 이후 P2-INPUT-IMPL-01에서 핵심 구현·회귀 보완·리뷰를 완료했다.
+- **사용자 승인:** 앱은 기존 `setState(normalize(value))`를 사용하고 프레임워크가 값과
+  커서 관리 부담을 줄인다. 이벤트 대상 기록, DOM → 최신 VDOM 정보 WeakMap,
+  기존 갱신과 확인 작업의 합류, 기존 Patch만 쓰기, 명시 위치 우선·생략 시 자동 보정.
+  사용자는 일관된 기준으로 테스트 항목을 도출하고 테스트 문서·코드를 작성하도록 요청했다.
+- **테스트 범위:** [명세](p2_input_sync_test_cases.md)의 INPUT·CARET·SELECT·GUARD와
+  기존 회원가입 DEMO-03/04. 실제 `startApp`·`h`·Hook·DOM 이벤트 전체 경로로 검증한다.
+  미구현 helper를 테스트용 API로 만들거나 알고리즘을 테스트에 재구현하지 않는다.
+- **계약 우선:** State가 같아도 이벤트로 DOM이 달라진 사례를 실패로 판정한다.
+  P2-DEMO-SIGNUP-01의 두 경계 기대값은 폐기하고 정상 값·선택 기대값으로 교체한다.
+  과거 성공 기록을 삭제하거나 새 구현의 성공으로 바꾸지 않는다.
+- **기존 계약 유지:** HOOK-09의 이벤트 없는 동일값 setter는 무예약. UPD-02의 tick
+  fixture는 무Patch. 기존 ERR-01/02 복구·오류 전달을 유지하고 실패 후 옛 대상에 쓰지 않는다.
+- **문서 해석 정정:** UPD-06은 연속 setter fixture의 최종 일치 계약이다. 이것을 모든
+  임의 외부 DOM 변경의 자동 복구 계약으로 확대하지 않는다. 이번 입력 경로는 명시적으로 추가한다.
+- **자동 위치 정책:** 편집 수 → 유지 문자 수 → 대응 위치 이동을 기준으로 일관된 대응을
+  사용한다. 삽입 경계는 앞, 삭제는 남은 경계, 치환 내부는 상대 위치. 정확한 마지막 동률,
+  반올림·상한 수치는 아직 확정하지 않고 명세 §8에 남긴다. 모호한 사례는 결정성·범위·문자
+  경계만 우선 검사하며 이것을 정확한 위치 품질 검증이라고 주장하지 않는다.
+- **선택적 위치:** 기존 브라우저 이름 `selectionStart`·`selectionEnd`·`selectionDirection`을
+  `h`에 지정하는 선언형 계약을 테스트한다. 지정이 있으면 최종 위치로 우선하고 생략하면
+  자동 보정한다. 일회성 명령 API·버전 필드는 도입하지 않는다.
+- **작업 선택과 이유:** 기존 명세 본문 41개를 재작성하지 않고 후속 명세를 연결해 기준선과
+  미구현 계약을 구분한다. 범용 통합 fixture는 테스트 파일 안에만 두고 공개 API를 통해
+  State·DOM·선택을 함께 검증한다. 엔진 코드를 고치지 않고 실패를 먼저 기록한다.
+- **영향 범위:** `docs/p2_input_sync_test_cases.md`, `docs/p2_test_cases.md`,
+  `docs/p2_test_boards.md`, `docs/p2_function_flow.md`, `README.md`,
+  `tests/integration/p2/controlled-input.test.ts`, `tests/integration/p2/signup-demo.test.ts`.
+  Phase 1 수정 제한 문서·요구사항 원문·위키 승인안·엔진 소스는 변경하지 않는다.
+- **실행 결과:** [테스트 진행표](p2_test_boards.md#입력-동기화선택-영역-테스트-선행).
+
+## P2-INPUT-IMPL-01 — 이벤트 확인과 기존 갱신의 연결
+
+- **상태:** 병렬 구현·독립 리뷰·재검토 완료. 최종 타입 검사·354개 테스트 통과.
+- **사용자 승인:** 미확정 항목을 남기고 설계 문서를 작성한 뒤 CommandCode DeepSeek V4.1
+  Flash 에이전트로 병렬 구현하고 이후 코드 리뷰를 수행한다. 임의의 새 용어 대신 기존
+  `FunctionComponent` 인스턴스·함수명을 사용한다.
+- **설계·작업 경계:** [p2_input_sync_design.md](p2_input_sync_design.md).
+  이벤트·대상 비교, 순수 위치 대응, Component·Patch 연결의 파일 소유권을 분리한다.
+  사용자가 승인한 기존 테스트 기대값은 동결하고, 에이전트는 커밋·push하지 않는다.
+- **전달 방식:** `FunctionComponent`가 가진 기록·확인 예약 콜백만 내부 `EventContext`로
+  전달한다. 이벤트 발생 때 부모 DOM을 탐색해 인스턴스를 찾거나 인스턴스 전체를 이벤트
+  모듈에 노출하지 않는다. 개발자는 추가 인자를 전달하지 않는다.
+- **선택 이유:** 기존 직접 이벤트 연결과 render/diff/patch를 재사용하고, WeakMap으로
+  대상의 최신 정보를 직접 조회한다. 확인만인 작업은 재렌더·effect 없이 처리한다.
+- **기존 표면 재사용:** VNode.properties·DiffCommand.update·기존 scheduleUpdate·Patch
+  실패 복구를 사용한다. 새 명령 종류·새 공개 setter·propertySchema 확장은 도입하지 않는다.
+- **성능 한계:** 기존 applyPatch.assertAllLinked의 전체 연결 검증은 유지한다. 대상 검색과
+  값 비교에 추가 전체 트리 탐색을 하지 않는 것과 전체 작업 O(1)은 다른 주장이다.
+- **내부 기본값과 미확정 정책:** 문자 대응의 마지막 동률·반올림·정렬표 상한 등은 구현에
+  필요한 결정적 기본값을 기록하되 공개 보장·사용자 확정 정책으로 격상하지 않는다.
+  [테스트 명세 §8](p2_input_sync_test_cases.md#8-숫자-기대값을-임의-확정하지-않은-항목)은 유지한다.
+- **문서 수정 제한:** renderChildren/renderNode/applyPatch에 추가되는 optional context와
+  Patch 선택 반영 확장은 P1 인터페이스 문서의 기존 시그니처와 차이가 생긴다. 소스 변경은
+  이번 승인 범위이나 `p1_function_flow.md`·`p1_prd.md`·`p1_test_cases.md`·`p1_interfaces.md`는
+  별도 명시적 수정 요청 전까지 변경하지 않고 이 기록·설계 문서로 차이를 알린다.
+- **기준점:** 코드 리뷰는 `d2e284c27a56bf0566af214363b0e9af31f9a8b2` 대비 미커밋 변경·새 파일을
+  대상으로 한다. 명세 충족과 코드 규칙을 독립 검토하고 전체 테스트를 재실행한다.
+- **구현 후 선택 기록:** FunctionComponent의 안정된 requestInputCheck와 작업용 recordVNode를
+  EventContext에 넣고 생성·갱신·복구 호출에 전파한다. 다음 작업의 대상 Set·예약 플래그는
+  실행 시작 때 분리해 effect의 후속 예약을 현재 정리에서 잃지 않는다.
+- **리뷰 보완:** 프로퍼티 목록·DOM 비교 규칙을 properties.ts로 모았다. 실제 사용 소비자가
+  h/input/patch 세 곳이므로 별도 공통 모듈로 두며 Snapshot 생성용 create.ts에 반영 동작을 섞지 않는다.
+  다중 select는 해당 options의 기존 selected 선언으로 복원하고, class만 바뀌면 과거 선택을
+  재적용하지 않도록 했다. INPUT-16·SELECT-08은 문서·실패 확인 뒤 수정했으며 기존 기대는 유지했다.
+- **최종 검증:** 부모 세션 npm run check·354개 통과, build 통과. 두 독립 리뷰 축의 재검토에서
+  중간 지적 두 개 해소·새 고위험 결함 발견 없음. [리뷰 기록](p2_input_sync_review.md) 참조.
+  실제 Brave에서 공백·새 문자 삽입·삭제, 같은 문서·루트·고양이 상태 유지 확인.
+- **검출력:** 원본을 변경하지 않은 임시 복사본에서 값 확인 제거 시 INPUT-01a 실패,
+  자동 선택 적용 제거 시 CARET-01a 실패를 각각 확인했다.
+- **남긴 한계:** 부분 선택 선언·타입별 value 정규화·handler 예외/중첩·compositionend 단독
+  정책은 미확정이다. 40,000칸은 잠정 기본값이고20만 문자에서는 분절만으로 수십 ms가
+  걸릴 수 있다. 실제 IME·undo/redo·autofill·다중 브라우저의 완전 보장은 하지 않는다.
+
 ## 남은 문서 충돌
 
 아래 항목은 이번 작업에서 수정하지 않았다. 수정 제한 문서이거나, 확정된 설계와 명세 문면의 관계를 사용자가 판단해야 하는 항목이다.
@@ -291,4 +370,4 @@
 1. **`docs/p1_test_cases.md`의 key 정책 서술 충돌.** 앞부분 §1(11행)은 "중복 key 오류, key 변경, 같은 key의 태그 변경 정책은 아직 미확정"이라고 적고 있지만, 같은 문서 §10(506행 이후)은 P1-CONF-03으로 "같은 key + 같은 태그 matched/update, 같은 key + 다른 태그 replace, key 변경 remove + insert, 중복 key는 keyless 순서 대응"을 확정했다. 후반 확정 기록이 실제 구현·테스트와 일치한다. 수정 제한 문서이므로 보고만 한다.
 2. **`docs/p1_decisions.md` P1-INIT-TDD-01의 과거 미완료 서술.** 상태가 "단위 검증 통과 — 실제 함수 통합 검증은 대기"이고, 주입 표의 `createSnapshot`·`createHistory` 행도 "구현 대기"다. 그러나 이후 P1-SNAP-01·P1-HISTORY-STATE-01·P1-RESTORE-01에서 실제 구현과 통합 검증이 완료됐다. 결정 당시 기록과 이후 결과가 같은 항목 안에서 갱신되지 않았다.
 3. **`docs/p1_diff_notes.md`의 과거 미구현 기록.** §11–§19 곳곳에 `collectChildChanges: 미구현`, `findChildMatches: 미구현`, `orderChanges: 미구현`, "전체 테스트 32개 통과·20개 실패" 같은 작업 당시 기록이 남아 있다. 이후 절에서 구현이 완료됐지만 과거 절에는 "현재 미구현"으로 읽힐 수 있는 서술이 그대로 있다.
-4. **`docs/p1_prd.md`·`docs/p1_interfaces.md`의 프로퍼티 제거 정책과 구현 차이.** PRD 288행은 "실제 DOM의 프로퍼티 제거 정책은 구현하지 않는다"고 하고, 인터페이스 116행은 "실제 DOM 제거 방법은 미확정"이라고 적는다. 그러나 `src/vdom/patch.ts`의 `removeProperties()`는 `Reflect.deleteProperty(element, name)`로 실제 삭제를 수행한다. 정상 생성 경로에서는 `setProperties`가 우선해 이 경로가 드러나지 않지만, 데이터 계약과 구현의 차이를 명세 문면만으로는 알 수 없다.
+4. **`docs/p1_prd.md`·`docs/p1_interfaces.md`의 프로퍼티 제거 정책과 구현 차이.** PRD 288행은 "실제 DOM의 프로퍼티 제거 정책은 구현하지 않는다"고 하고, 인터페이스 116행은 "실제 DOM 제거 방법은 미확정"이라고 적는다. 기존 `removeProperties()`의 삭제 의미는 이번 `src/vdom/patch.ts`의 `applyPropertyChanges()`에 통합됐으며, 선택 선언 외에는 `Reflect.deleteProperty(element, name)`를 수행한다. 정상 생성 경로에서는 `setProperties`가 우선해 이 경로가 드러나지 않지만, 데이터 계약과 구현의 차이를 명세 문면만으로는 알 수 없다.

@@ -1,8 +1,14 @@
 # Phase 2 테스트 진행표
 
-기준: [p2_test_cases.md](p2_test_cases.md) §2–§8. 현재 명세는 INIT 4개, H 11개, HOOK 13개, UPD 6개, EFF 1개, ERR 3개, FLOW 3개로 **41행(테스트 ID 41개), 모두 O**다. [자식 경계 변경](p2_component_boundary_plan.md) 구현·검증과 독립 검토 지적 보완을 완료했다. 최종 `npm run check`: 타입 검사 통과, **26개 파일 293개 통과**. Phase 2 실행은 **100개**, Phase 1은 **193개**다. 이전 Phase 2 77개·전체 270개는 변경 전 기준선이다. 명세 ID 수·런타임 실행 수·컴파일 전용 타입 검사를 구분한다.
+**최신 상태:** 입력 동기화·선택 영역 구현과 독립 리뷰의 두 회귀 수정을 완료했다.
+`npm run check`: 타입 검사·전체 **28개 파일·354개 통과**, 실패·skip/todo 0개.
+기존297개와 신규57개를 구분한다. 실제 Chromium 계열 Brave에서 공백 입력·새 문자 삽입·삭제와
+같은 문서·루트·고양이 상태 유지도 확인했다. §8 미확정 정책·전체 IME 보장은 완료로 보지 않는다.
+[새 계약 실행 결과](#입력-동기화선택-영역-테스트-선행)를 별도로 기록한다.
 
-결과는 `O` 현재 구현의 검사 통과, `X` 실패, 빈칸은 미실행 또는 일부 검증을 뜻한다. 소스·테스트를 명세와 대조하고 전체 검사를 재실행해 아래 41행을 판정했다. H-09의 타입 부분은 컴파일 검사이고 나머지 DOM 증거는 jsdom 관찰이다. spy 호출 기록과 DOM 참조 검증을 구분한다. 사용자 브라우저 실화면 검증은 수행하지 않았다.
+기존 기준선: [p2_test_cases.md](p2_test_cases.md) §2–§8은 INIT 4개, H 11개, HOOK 13개, UPD 6개, EFF 1개, ERR 3개, FLOW 3개로 **41행(테스트 ID 41개), 모두 O**다. [자식 경계 변경](p2_component_boundary_plan.md) 구현·검증과 독립 검토 지적 보완을 완료했다. 당시 `npm run check`: 타입 검사 통과, **26개 파일 293개 통과**. Phase 2 실행은 **100개**, Phase 1은 **193개**다. 이전 Phase 2 77개·전체 270개는 변경 전 기준선이다. 명세 ID 수·런타임 실행 수·컴파일 전용 타입 검사를 구분한다.
+
+결과는 `O` 현재 구현의 검사 통과, `X` 실패, 빈칸은 미실행 또는 일부 검증을 뜻한다. 소스·테스트를 명세와 대조하고 전체 검사를 재실행해 아래 41행을 판정했다. H-09의 타입 부분은 컴파일 검사이고 나머지 DOM 증거는 jsdom 관찰이다. spy 호출 기록과 DOM 참조 검증을 구분한다. 과거41행 작업 당시에는 사용자 브라우저 실화면 검증을 수행하지 않았으며 이번 입력 검증은 아래 별도 기록을 따른다.
 
 | 테스트 카테고리 | 테스트 코드 | 테스트 내용 | 테스트 결과(O,X) | 원인 분석 |
 | --- | --- | --- | --- | --- |
@@ -48,7 +54,71 @@
 | 8. 통합 (FLOW) | **FLOW-02** | 함수 h 경계의 자식 이벤트로 부모 State·화면 갱신 | O | 실행 1개. 기존 div 안 함수 h 호출. count 0·1 진입 각 1회, 각 render의 부모 callback과 자식 props 참조 동일·render 간 callback은 변경. 클릭 후 0→1·버튼/텍스트 DOM 참조 동일. |
 | 8. 통합 (FLOW) | **FLOW-03** | 입력 요소의 value·checked가 properties를 거쳐 화면에 반영된다. | O | 최초 value A·checked false, 갱신 후 B·true, input 요소 객체 유지 확인. |
 
-## 실행 단위 구성
+## 입력 동기화·선택 영역 테스트 선행
+
+명세: [p2_input_sync_test_cases.md](p2_input_sync_test_cases.md). 아래는 실제 실행한 결과이며
+실패를 현재 동작에 맞춰 기대값 수정으로 없애지 않는다. 숫자는 명세 행 수가 아닌 실행 단위다.
+
+| 그룹 | 실행 | 통과 | 실패 | 판정 |
+|---|---:|---:|---:|---|
+| INPUT | 21 | 21 | 0 | 같은 State의 값 복원·최신 조회·대상 한정·복수 앱·checkbox·OPTION.selected 포함 |
+| CARET | 18 | 18 | 0 | 대표 수치·선택 방향·표시 문자 경계. CARET-05 네 입력은 결정성·안전성만 검증 |
+| SELECT | 8 | 8 | 0 | 명시 위치 우선·초기/위치만 변경·선언 삭제·속성만 갱신 시 커서 유지 |
+| GUARD | 10 | 10 | 0 | 미지원 타입·조합 중 쓰기 방지·비조합 input 재개·포커스·실패·제거/교체 |
+| **새 파일 합계** | **57** | **57** | **0** | `tests/integration/p2/controlled-input.test.ts` |
+| 기존 회원가입 데모 | 4 | 4 | 0 | DEMO-03/04 정상 기대 통과. 같은 루트 전환·붙여넣기도 유지 |
+| 기존 명세 기준선 | 293 | 293 | 0 | 기존 26개 파일은 전부 통과 |
+| **전체** | **354** | **354** | **0** | 28개 파일 전부 통과 |
+
+### 실행 기록
+
+1. 변경 전 `npm run check`: 타입 검사 통과, 27개 파일·297개 통과.
+2. 문서에서 정확한 입력·시점·기대값을 먼저 작성한 뒤 테스트 코드 작성.
+   기존 helper `createContainer`·`flushUpdates`·`captureScheduledUpdates`·`resetBody` 재사용.
+3. 새 테스트는 기존 공개 `startApp`·`h`·Hook을 호출한다. 실제 Patch를 실행하는 spy로
+   실패 주입을 하되 정상 경로를 대역으로 대체하지 않는다. 내부 미구현 함수 import 없음.
+4. `npm run typecheck`: 통과.
+5. `npx vitest run --reporter=json --outputFile=/tmp/opencode/input-sync-all-red.json`:
+   352개 중 309개 통과·43개 실패. **실패43개 모두 assertion 실패**이며 모듈 부재·환경
+   초기화 중단이 아니다. 새 INPUT-01a/b·15는 값 불일치, CARET은 끝 이동,
+   SELECT는 명시 위치 미반영을 검출한다.
+6. 기존 `tests/integration/p2/signup-demo.test.ts`의 두 경계 기대를 DEMO-03/04로 바꿨다.
+   원래 실패를 기대하는 검사로 뒤집거나 skip/fails 표식으로 통과 처리하지 않았다.
+7. 테스트 선행 단계의 `git diff --check`: 통과. 이 시점에는 엔진을 변경하지 않았음.
+8. 사용자 구현 승인 후 [설계](p2_input_sync_design.md)를 작성하고 CommandCode DeepSeek V4.1
+   Flash 세 에이전트가 파일을 나눠 구현. 부모 세션의 `npm run check`: 352개 전부 통과.
+9. 독립 [코드 리뷰](p2_input_sync_review.md)에서 다중 OPTION 복원 누락과 attribute-only
+   선택 재적용을 재현. 문서·INPUT-16/SELECT-08을 먼저 추가하고 각각 assertion 실패 확인 후 수정.
+   추가 두 항목만 실행한 필터 검사의55 skipped는 선택하지 않은 항목이며, 전체 검사는 skip0이다.
+10. 부모 세션 `npm run check`: 타입 검사·28개 파일354개 통과. 리뷰어 두 명의 재검토에서도
+    같은 결과·기존 중간 지적 해소 확인, 새 고위험 결함 발견 없음. 부분 선언 등 미확정은 유지.
+11. `npm run build`: 타입 검사와 Phase 1 main.html 빌드 통과. Phase 2 배포 입력 확정·배포를 뜻하지 않음.
+12. 실제 Chromium 계열 Brave의 native 키 입력으로 A/B/삭제 확인:
+    `cat@example.com`의2번 위치에 공백 → 값 유지·커서2,
+    같은 위치에 ` x ` 삽입 → `caxt@example.com`·커서3,
+    Backspace → `cat@example.com`·커서2. 각 시점 State 텍스트도 실제 값과 일치.
+    같은 #app 참조·performance.timeOrigin 유지, 고양이로 돌아온 뒤 쓰다듬은 횟수1 유지.
+    최종 브라우저 실행의 page/console 오류0. 클립보드 붙여넣기 자체·IME·undo는 검증하지 않음.
+13. `/tmp/opencode`의 별도 복사본 두 개에서 한 기능씩 무력화:
+    collectInputChanges를 무력화하면 INPUT-01a가 공백 잔류로 실패,
+    자동 setSelectionRange를 제거하면 CARET-01a가 커서3≠2로 실패.
+    원본 프로젝트를 변형하지 않았고 테스트 기대도 수정하지 않음.
+14. 표시 문자 경계·단조성336회 추가 probe 통과. 국소 비용 측정과20만 문자 지연은
+    [설계 §6](p2_input_sync_design.md#6-구현된-내부-기본값과-리뷰-보완)에 기록. 브라우저 전체 성능 보장 아님.
+
+### 미검증·한계
+
+- 자동 회귀는 jsdom이다. 실제 Brave의 텍스트 입력 A/B·삭제·같은 루트 전환은 확인했으나
+  실제 클립보드·한글 IME·undo/redo·autofill·다중 브라우저는 미검증이다.
+- INPUT-06은 같은 트리의 비대상 DOM value 읽기·쓰기를 막는다. 이 결과만으로 WeakMap
+  사용 여부나 모든 내부 순회가 없다는 것을 증명하지는 않는다. 독립 소스 리뷰에서
+  FunctionComponent별 WeakMap·성공 시 교체를 확인했다. assertAllLinked 전체 순회는 유지된다.
+- 마지막 동률·상대 위치 반올림·계산량 상한·compositionend 단독 처리 등은 명세 §8에
+  잠정 내부 기본값과 별도 미확정 정책으로 남겼다. 수치 경계 전용 회귀는 아직 없고 통과 수에 포함하지 않는다.
+- Intl.Segmenter 지원 런타임 전제, 명시적 부분 선언·undefined·타입별 value 정규화·
+  handler 예외·중첩 이벤트·syncEvents 실패의 확대된 보장은 여전히 미확정이다.
+
+## 기존 실행 단위 구성
 
 현재 명세 ID **41개**와 Phase 2 실행 **100개**를 구분한다. 변경 전 실행은 19+35+16+7=77개, 현재는 +23개다. 컴파일 전용 타입 검사는 런타임 수에 합산하지 않는다.
 

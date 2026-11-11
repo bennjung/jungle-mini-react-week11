@@ -47,7 +47,7 @@ export function Signup({ email, onEmailInput, onBack }: {
         h('li', {}, '입력된 이메일 중간에 공백만 넣어 State와 실제 입력값을 비교합니다.'),
         h('li', {}, '중간에 새 문자와 공백을 함께 붙여넣고 커서 위치를 확인합니다.')
       ),
-      h('p', { className: 'note' }, '엔진을 수정하거나 커서를 수동 복원하지 않았습니다. 현재 입력 처리의 경계를 관찰합니다.')
+      h('p', { className: 'note' }, '앱은 공백을 제거한 값을 State에 넣고, 프레임워크가 실제 입력값과 선택 영역을 보정합니다. 반복 문자나 전체 치환의 위치는 정해진 대응 규칙을 따릅니다.')
     ),
     h('span', { id: 'signup-email-state', hidden: true }, email)
   );

@@ -4,6 +4,8 @@
  */
 import { diff } from '../vdom/diff';
 import { syncEvents } from '../vdom/events';
+import type { EventContext } from '../vdom/events';
+import { collectInputChanges } from '../vdom/input';
 import { applyPatch, renderChildren } from '../vdom/patch';
 import type { DiffCommand, VNode, VRoot } from '../vdom/types';
 import {
@@ -180,6 +182,41 @@ class FunctionComponent {
   currentVDOM: VRoot | null = null;
   updateScheduled = false;
   /**
+   * 다음 갱신에서 재렌더가 필요한지. State 변경 여부와 별개로 합쳐야 하므로
+   * 기존 예약이 있어도 이 값을 먼저 올린다.
+   */
+  renderRequested = false;
+  /**
+   * 마지막 성공 commit에서 실제 DOM 요소별 최신 VNode. 이벤트 대상 조회는
+   * 전체 VDOM·부모 DOM 탐색 대신 이 기록만 사용한다.
+   */
+  nodes = new WeakMap<Element, VNode>();
+  /**
+   * 다음 갱신에서 확인할 이벤트 대상. 처리 시작 시 이 Set을 떼어 내므로
+   * 처리 중 들어온 요청은 다음 예약으로 남는다.
+   */
+  inputTargets = new Set<Element>();
+  /**
+   * 이벤트 함수가 유지하는 안정된 요청 경계. handler가 바뀌어도 이 참조는 같으므로
+   * 재연결 비교에 쓰고, 실제 인스턴스의 대상 기록과 예약만 담당한다.
+   */
+  readonly requestInputCheck = (target: Element): void => {
+    this.inputTargets.add(target);
+    scheduleUpdate(this);
+  };
+  /**
+   * 이번 배치가 사용할 노드 기록과 이벤트 요청 경계를 만든다.
+   * 기록은 작업용 WeakMap에만 채우고 성공한 commit에서 교체한다.
+   */
+  createEventContext(nodes: WeakMap<Element, VNode>): EventContext {
+    return {
+      recordVNode: (node: VNode) => {
+        if (node.dom instanceof Element) nodes.set(node.dom, node);
+      },
+      requestInputCheck: this.requestInputCheck
+    };
+  }
+  /**
    * 이번 갱신이 시작되기 전 Hook 슬롯 필드의 얕은 복사본.
    * 예약된 갱신이 실제로 시작되는 시점에 만든다. applyPatch 실패 시 화면과 내부 상태를
    * 같은 시점으로 되돌리는 기준이다.
@@ -260,41 +297,75 @@ class FunctionComponent {
    * 컴포넌트 오류는 DOM을 건드리지 않고 호출자에게 전파된다.
    */
   mount(): void {
+    const nodes = new WeakMap<Element, VNode>();
+    const context = this.createEventContext(nodes);
     const root = createVRoot(renderComponent(this, 'mount'));
-    renderChildren(root, this.container);
+
+    renderChildren(root, this.container, context);
 
     // 성공한 렌더만 비교 기준이 된다. 실패한 렌더는 이전 화면을 덮어쓰지 않는다.
     this.currentVDOM = root;
+    this.nodes = nodes;
 
     // 효과는 VDOM 교체까지 끝난 성공한 commit 뒤에 실행한다.
     runEffects(this);
   }
 
   /**
-   * 상태 변경 뒤 재렌더링. 단계마다 실패 지점과 성공 시점이 코드에서 바로 읽히게 한다.
+   * 예약된 작업 하나를 실행한다. 시작 시 이번 대상과 재렌더 여부를 떼어 내고
+   * 예약 플래그를 내려, 처리 중 들어온 요청이 다음 microtask로 이어지게 한다.
    */
-  update(): void {
+  runScheduledUpdate(): void {
+    const targets = this.inputTargets;
+    const shouldRender = this.renderRequested;
+
+    this.inputTargets = new Set();
+    this.renderRequested = false;
+    this.updateScheduled = false;
+
+    if (shouldRender) {
+      this.snapshotHooksBeforeUpdate();
+      this.update(targets);
+      return;
+    }
+
+    this.checkInputTargets(targets);
+  }
+
+  /**
+   * 재렌더 경로. 기존 render/diff에 이벤트 대상의 값·선택 보정을 합류시키고,
+   * 성공한 화면과 노드 기록을 같은 시점에 확정한 뒤 effect를 실행한다.
+   */
+  update(inputTargets: ReadonlySet<Element> = new Set()): void {
     const previousRoot = this.currentVDOM;
     if (previousRoot === null) {
       throw new Error('mount() 이전에는 update()를 실행할 수 없습니다');
     }
 
+    const nextNodes = new WeakMap<Element, VNode>();
+    const context = this.createEventContext(nextNodes);
+
     try {
       const nextRoot = createVRoot(renderComponent(this, 'update'));
-      const changes = diff(previousRoot, nextRoot);
+      const changes = collectInputChanges(
+        inputTargets,
+        this.nodes,
+        diff(previousRoot, nextRoot)
+      );
 
       // DOM 변경이 없으면 Patch는 생략하지만 event 동기화는 화면 데이터와 무관하게 수행한다.
       if (changes.length > 0) {
-        applyPatchOrRestore(this, previousRoot, nextRoot, changes);
+        applyPatchOrRestore(this, previousRoot, nextRoot, changes, context);
       }
 
-      syncEvents(nextRoot);
+      syncEvents(nextRoot, context);
 
-      // 성공한 갱신만 현재 VDOM이 된다. 실패한 갱신은 마지막 성공 상태를 덮어쓰지 않는다.
+      // 성공한 갱신만 현재 VDOM과 대상 기록이 된다. 실패한 갱신은 마지막 성공 상태를
+      // 덮어쓰지 않는다. 복원 경로는 별도로 기록을 다시 채운다.
       this.currentVDOM = nextRoot;
+      this.nodes = nextNodes;
     } finally {
       // 성공·실패 모두 이번 갱신의 복사본과 State 이전 값 기록은 commit 경계에서 끝난다.
-      // applyPatch 실패는 예외를 전파하기 전에 복원을 마쳤으므로 여기서는 남은 기록만 버린다.
       this.discardHooksBeforeUpdate();
     }
 
@@ -302,6 +373,26 @@ class FunctionComponent {
     // 그 setter가 새 배치의 값을 기록하고, 다음 microtask가 효과 실행 완료 뒤의 슬롯을
     // 복사할 수 있다. 화면 변경이 없어도 효과 판단은 생략하지 않는다.
     runEffects(this);
+  }
+
+  /**
+   * 확인만 필요한 경로. Component·diff·syncEvents·effect를 다시 실행하지 않고
+   * 이벤트 대상의 값·선택만 현재 VDOM 기준으로 반영한다.
+   */
+  checkInputTargets(inputTargets: ReadonlySet<Element>): void {
+    const root = this.currentVDOM;
+    if (root === null || inputTargets.size === 0) return;
+
+    const context = this.createEventContext(this.nodes);
+
+    try {
+      const changes = collectInputChanges(inputTargets, this.nodes, []);
+      if (changes.length === 0) return;
+
+      applyPatchOrRestore(this, root, root, changes, context);
+    } finally {
+      this.discardHooksBeforeUpdate();
+    }
   }
 }
 
@@ -313,10 +404,11 @@ function applyPatchOrRestore(
   instance: FunctionComponent,
   previousRoot: VRoot,
   nextRoot: VRoot,
-  changes: DiffCommand[]
+  changes: DiffCommand[],
+  context: EventContext
 ): void {
   try {
-    applyPatch(previousRoot, nextRoot, changes);
+    applyPatch(previousRoot, nextRoot, changes, context);
   } catch (error) {
     restorePatchFailure(instance, previousRoot);
     throw error;
@@ -345,7 +437,12 @@ function restoreLastCommittedRoot(
   try {
     // renderChildren은 마지막 성공 VDOM의 VNode.dom을 새 DOM으로 다시 연결한다.
     // 그래야 다음 갱신의 diff가 방금 복구한 실제 화면을 기준으로 비교할 수 있다.
-    renderChildren(previousRoot, instance.container);
+    // 복구로 새로 만든 DOM도 같은 기록 경계로 채워야 이후 이벤트 대상 조회가 동작한다.
+    const restoredNodes = new WeakMap<Element, VNode>();
+    const context = instance.createEventContext(restoredNodes);
+
+    renderChildren(previousRoot, instance.container, context);
+    instance.nodes = restoredNodes;
   } catch {
     // 복구 중 오류는 원래 반영 오류를 가리지 않는다. 이후 동작은 보장하지 않는다.
   }
@@ -583,7 +680,7 @@ function applyStateUpdate(
       : next;
 
   // Object.is는 NaN을 같은 값으로, +0과 -0을 다른 값으로 판정한다.
-  // 같은 값이면 슬롯도 쓰지 않고 갱신도 예약하지 않는다.
+  // 같은 값이면 슬롯도 쓰지 않고 갱신도 예약하지 않는다(HOOK-09 유지).
   if (Object.is(previous, value)) return;
 
   // 전체 슬롯 복사본은 갱신이 시작될 때 만든다. 여기서는 복원에 필요한 State 이전
@@ -591,23 +688,22 @@ function applyStateUpdate(
   instance.rememberStateValue(slot);
 
   slot.value = value;
+  // 이벤트 대상 확인이 이미 예약을 만들었어도 재렌더 필요 표시는 합쳐야 한다.
+  instance.renderRequested = true;
   scheduleUpdate(instance);
 }
 
 function scheduleUpdate(instance: FunctionComponent): void {
-  // 인스턴스별 예약은 1회만 유지한다. 처리 중 들어온 setter는 현재 처리 뒤의
-  // microtask로 이어지므로 중첩 update를 만들지 않는다.
+  // 인스턴스별 예약은 1회만 유지한다. 처리 중 들어온 setter나 이벤트 대상은 현재
+  // 처리 뒤의 microtask로 이어지므로 중첩 update를 만들지 않는다.
   if (instance.updateScheduled) return;
 
   instance.updateScheduled = true;
   queueMicrotask(() => {
-    instance.updateScheduled = false;
-
     // 효과는 commit 뒤에 실행되고 cleanup·deps는 효과가 반환된 뒤에 확정된다.
     // setter 시점에 복사하면 아직 확정되지 않은 효과 슬롯을 복원 기준으로 삼게 되므로,
     // 직전 commit의 효과 실행이 끝난 지금(render 전) 전체 슬롯을 복사한다.
-    instance.snapshotHooksBeforeUpdate();
-    instance.update();
+    instance.runScheduledUpdate();
   });
 }
 

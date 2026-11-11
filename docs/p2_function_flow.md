@@ -1,13 +1,18 @@
 # Phase 2 함수 흐름 — Top down
 
+> **입력 동기화·선택 영역:** [테스트 계약](p2_input_sync_test_cases.md)과
+> [구현 설계](p2_input_sync_design.md)를 반영했다. 기존 setter의 동일값 생략은 유지하고,
+> 이벤트가 남긴 대상 확인을 기존 예약과 합류한다. 미확정 위치 정책·실브라우저 한계는 별도다.
+
 기준: [resc/phase2.md](../resc/phase2.md), [p2_test_cases.md](p2_test_cases.md), [p2_decisions.md](p2_decisions.md), [wiki/Phase2-Design-merged.md](../wiki/Phase2-Design-merged.md)의 승인안.
-이 문서는 현재 구현의 호출 구조를 위에서 아래로 설명한다. 자식 경계는 [승인 변경계약과 실행 기록](p2_component_boundary_plan.md)을 반영한다. `npm run check`로 타입 검사·전체 293개 실행 통과를 확인했고 사용자 브라우저 실화면 검증은 수행하지 않았다. 함수 이름과 책임은 승인안에서 고정한 이름을 따르고, 나머지 helper는 구현 모듈 내부 이름이다.
+이 문서는 현재 구현의 호출 구조를 위에서 아래로 설명한다. 자식 경계는 [승인 변경계약과 실행 기록](p2_component_boundary_plan.md)을 반영한다. 자식 경계 작업 당시 `npm run check`로 타입 검사·전체 293개 실행 통과를 확인했고 사용자 브라우저 실화면 검증은 수행하지 않았다. 후속 입력 계약을 포함한 최신 결과는 [진행표](p2_test_boards.md#입력-동기화선택-영역-테스트-선행)를 따른다. 함수 이름과 책임은 승인안에서 고정한 이름을 따르고, 나머지 helper는 구현 모듈 내부 이름이다.
 
 표기:
 
 - **[공개]** 사용자 코드가 직접 호출하는 경계다.
 - **[내부]** 공개 경계 안에서만 호출한다. 테스트가 직접 호출하지 않는다.
-- **[P1]** Phase 1의 Diff·Patch·렌더링 함수를 그대로 재사용한다.
+- **[P1]** Phase 1의 Diff·Patch·렌더링을 재사용한다. Patch·생성 함수에는 선택적
+  EventContext 인자와 선택 영역 반영이 추가됐으며, 제한된 P1 문서와의 차이는 결정 기록에 남긴다.
 
 ## 1. 공개 경계와 전체 호출 지도
 
@@ -37,6 +42,7 @@ flowchart LR
     RC --> H
     FC --> D["diff() · applyPatch() · renderChildren()"]
     FC --> SE["syncEvents()"]
+    FC --> IC["collectInputChanges(): 이벤트 대상만 비교"]
 ```
 
 ## 2. 최초 표시 흐름
@@ -58,11 +64,12 @@ startApp(component, container)
    │  ├─ normalizeComponentResult()         반환값을 VNode[]로 정규화
    │  └─ endHooks()                         finally에서 문맥 해제
    ├─ createVRoot(nodes)                    { childNodes, dom: null }
-   ├─ renderChildren(root, container)       [P1] 기존 자식 제거·전체 DOM 생성
+    ├─ nodes = 새 WeakMap, createEventContext(nodes)
+    ├─ renderChildren(root, container, context) [P1] 기존 자식 제거·전체 DOM 생성
    │  ├─ container.replaceChildren()
    │  ├─ root.dom = container
-   │  └─ child마다 renderNode(child)        [P1] DOM 생성·참조 연결·bindEvents
-   ├─ currentVDOM = root                    성공한 렌더만 비교 기준
+    │  └─ child마다 renderNode(child, context) [P1] DOM 생성·참조 연결·recordVNode·bindEvents
+    ├─ currentVDOM = root, this.nodes = nodes 성공한 렌더만 비교 기준
    └─ runEffects(instance)                  effect 슬롯을 순서대로 실행
       ├─ runEffectCleanup(slot)             mount에는 cleanup이 없음
       ├─ invokeEffect(slot.effect)          effect 실행·cleanup 반환 검사
@@ -77,9 +84,9 @@ flowchart TD
     D --> E["Component 실행"]
     E --> F["h() · useState() · useMemo() · useEffect()"]
     F --> G["createVRoot(nodes)"]
-    G --> H["renderChildren(root, container)"]
-    H --> I["renderNode(): DOM 생성·참조 연결·bindEvents"]
-    I --> J["currentVDOM = root"]
+    G --> H["renderChildren(root, container, context)"]
+    H --> I["renderNode(): DOM 생성·선택 반영·recordVNode·bindEvents"]
+    I --> J["currentVDOM·WeakMap 확정"]
     J --> K["runEffects(instance)"]
     K --> L["effect 실행·cleanup 저장"]
 ```
@@ -88,78 +95,73 @@ flowchart TD
 
 - Component 실행과 반환값 검증이 끝난 뒤에야 `renderChildren()`을 호출한다. Component나 `h()`가 던지면 컨테이너는 건드리지 않는다.
 - `renderChildren()`은 컨테이너의 기존 자식을 모두 제거하고 VRoot의 자식들을 새로 만든다. 최초 표시에서는 비교할 이전 VDOM이 없으므로 전체 생성이 맞다.
-- `renderNode()`는 요소를 만들면서 `vnode.dom`을 연결하고, attributes → childNodes → properties 순서로 적용한 뒤 `events`가 있으면 `bindEvents()`를 호출한다.
-- `currentVDOM`은 `renderChildren()` 성공 뒤에 지정한다. 실패한 최초 렌더는 비교 기준을 남기지 않는다.
+- `renderNode()`는 `vnode.dom`을 연결하고 attributes → childNodes → properties·명시 선택 순으로
+  적용한 뒤 context.recordVNode를 호출한다. events가 있으면 bindEvents에도 context를 전달한다.
+- `currentVDOM`과 요소별 WeakMap은 `renderChildren()` 성공 뒤에 지정한다. 실패한 최초 렌더는 비교 기준을 남기지 않는다.
 - effect는 DOM 생성과 `currentVDOM` 지정이 모두 끝난 뒤 실행한다. 그래서 effect 안에서 컨테이너의 DOM을 조회할 수 있다(INIT-03).
 
 ## 3. 갱신 흐름
 
-setter는 값을 바꾸고 갱신을 예약한다. 실제 재렌더는 현재 동기 처리(클릭 handler·effect)가 끝난 뒤 microtask에서 한 번 실행된다. `update()`는 새 VDOM을 만들고, Diff로 변경 명령을 계산하고, 필요한 Patch·이벤트 동기화를 수행한 뒤 현재 VDOM을 교체하고 effect를 실행한다.
+setter는 다른 값일 때만 State를 쓰고 `renderRequested`를 올린 뒤 예약한다. 입력 이벤트의
+wrapper는 별도로 같은 인스턴스의 `requestInputCheck(target)`를 호출한다. 이 경로는 대상만
+Set에 넣고 같은 예약을 사용한다. 두 요청이 합류해도 재렌더 필요 플래그를 잃지 않는다.
 
 ```text
-setter(next)
-├─ applyStateUpdate(instance, slot, next)
-│  ├─ 함수형 updater면 previous 값을 기준으로 계산
-│  ├─ Object.is(previous, value) → 같으면 슬롯도 쓰지 않고 종료
-│  ├─ rememberStateValue(slot)             슬롯별 첫 쓰기의 이전 State 값 기록
-│  ├─ slot.value = value
-│  └─ scheduleUpdate(instance)
-│     ├─ updateScheduled가 true면 종료
-│     ├─ updateScheduled = true
-│     └─ queueMicrotask(callback)
-│        ├─ updateScheduled = false
-│        ├─ snapshotHooksBeforeUpdate()    render 전 전체 슬롯 얕은 복사
-│        └─ update()
-│           ├─ previousRoot = currentVDOM  null이면 오류
-│           ├─ try
-│           │  ├─ renderComponent(instance, 'update')
-│           │  │  ├─ beginHooks()          cursor=0, phase=update
-│           │  │  ├─ instance.component()
-│           │  │  ├─ assertHookCountConsumed()  개수 감소 검사
-│           │  │  ├─ normalizeComponentResult()
-│           │  │  └─ endHooks()            finally
-│           │  ├─ createVRoot(nodes)
-│           │  ├─ diff(previousRoot, nextRoot)          [P1] 명령 계산·유지 노드 연결
-│           │  ├─ changes.length > 0이면
-│           │  │  └─ applyPatchOrRestore()
-│           │  │     ├─ applyPatch(previousRoot, nextRoot, changes)  [P1]
-│           │  │     └─ catch → restorePatchFailure() → 원래 오류 rethrow
-│           │  ├─ syncEvents(nextRoot)     화면 데이터와 무관하게 항상
-│           │  └─ currentVDOM = nextRoot
-│           ├─ finally
-│           │  └─ discardHooksBeforeUpdate()
-│           └─ runEffects(instance)        try가 정상 종료된 경우에만
+State setter
+└─ applyStateUpdate(instance, slot, next)
+   ├─ Object.is(previous, value) 같음 → 슬롯 쓰기·예약 없음
+   └─ 다른 값 → 이전 값 기록·슬롯 쓰기·renderRequested=true → scheduleUpdate(instance)
+
+input/change wrapper
+└─ 사용자 handler 정상 종료 → requestInputCheck(target)
+   └─ inputTargets.add(target) → scheduleUpdate(instance)
+
+scheduleUpdate(instance)                     인스턴스별 microtask 1회
+└─ runScheduledUpdate()
+   ├─ 이번 targets·shouldRender를 떼어 냄
+   ├─ 다음 targets를 새 Set으로 교체, renderRequested/updateScheduled=false
+   ├─ shouldRender=true
+   │  ├─ snapshotHooksBeforeUpdate()
+   │  └─ update(targets)
+   │     ├─ 작업용 WeakMap·context 생성
+   │     ├─ renderComponent(update) → createVRoot → diff(previousRoot, nextRoot)
+   │     ├─ collectInputChanges(targets, 성공 WeakMap, diff 명령)
+   │     ├─ 명령이 있으면 applyPatchOrRestore(..., context)
+   │     ├─ syncEvents(nextRoot, context)     기존 순회에서 새 기록 채움
+   │     ├─ currentVDOM·성공 WeakMap 교체
+   │     ├─ finally: 이번 Hook 복사본 폐기
+   │     └─ runEffects()                     성공 경로만, 값·선택 반영 이후
+   └─ shouldRender=false
+      └─ checkInputTargets(targets)
+         ├─ collectInputChanges(targets, 성공 WeakMap, [])
+         ├─ 명령이 있으면 applyPatchOrRestore(root, root, ...)
+         └─ render/diff/syncEvents/effect 없음
 ```
 
 ```mermaid
 flowchart TD
-    A["setter(next)"] --> B{"Object.is 이전 값과 같은가"}
-    B -->|"같음"| B1["슬롯 쓰기·예약 없음"]
-    B -->|"다름"| C["rememberStateValue: State 이전 값 기록"]
-    C --> D["slot.value = value"]
-    D --> E{"updateScheduled"}
-    E -->|"이미 예약됨"| E1["현재 배치에 합류"]
-    E -->|"아니면"| F["queueMicrotask 예약"]
-    F --> G["updateScheduled = false"]
-    G --> G2["snapshotHooksBeforeUpdate: 전체 슬롯 복사"]
-    G2 --> H["update()"]
-    H --> I["renderComponent(update)"]
-    I --> J["createVRoot"]
-    J --> K["diff(previous, next)"]
-    K --> L{"changes.length > 0"}
-    L -->|"예"| M["applyPatchOrRestore"]
-    L -->|"아니오"| N["Patch 생략"]
-    M --> O["syncEvents(next)"]
-    N --> O
-    O --> P["currentVDOM = next"]
-    P --> Q["runEffects"]
+    S["다른 값 setter: renderRequested=true"] --> R["scheduleUpdate"]
+    E["입력 wrapper: 대상 Set 기록"] --> R
+    R --> B["runScheduledUpdate: 이번 요청 분리"]
+    B --> D{"재렌더 필요?"}
+    D -->|"예"| F["renderComponent → diff"]
+    F --> C["collectInputChanges: 명령 합류"]
+    D -->|"아니오"| K["현재 VDOM으로 collectInputChanges"]
+    C --> P["필요한 applyPatch: 값·선택 반영"]
+    K --> O["필요한 applyPatch: 값·선택 반영"]
+    P --> N["syncEvents → VDOM·WeakMap 확정 → runEffects"]
+    O --> X["확인 종료: effect 없음"]
 ```
 
 핵심 계약:
 
 - **배치**: 같은 동기 처리에서 setter를 여러 번 호출해도 예약은 1회다. 예약 콜백이 시작되면서 플래그를 내리므로, effect 안 setter는 현재 처리 뒤의 다음 microtask로 이어진다(UPD-05·06).
-- **화면이 같아도 하는 일**: `diff()`가 빈 배열을 반환하면 `applyPatch()`는 생략하지만 `syncEvents()`·`currentVDOM` 교체·`runEffects()`는 수행한다. 그래야 handler만 바뀐 갱신(UPD-03)과 deps만 바뀐 효과(EFF-01)가 반영된다.
-- **현재 VDOM**: `syncEvents()`까지 성공한 뒤에만 `nextRoot`로 교체한다. Diff나 Patch가 실패한 갱신은 마지막 성공 VDOM을 덮어쓰지 않는다.
+- **화면이 같아도 하는 일**: 재렌더 경로는 `diff()`가 비어도 입력 보정 명령을 합류한다.
+  합류 후에도 명령이 없을 때만 Patch를 생략한다. syncEvents·현재 VDOM/WeakMap 교체·효과 판단은
+  유지한다. 확인만인 경로는 이 단계들을 재실행하지 않는다.
+- **현재 VDOM**: syncEvents까지 성공한 뒤에만 nextRoot와 작업용 WeakMap을 함께 확정한다.
+  실패한 갱신의 WeakMap을 성공 상태로 남기지 않는다. Patch 실패 복구도 새 WeakMap을 채운다.
+- **비용**: 대상 조회는 WeakMap을 사용하지만 applyPatch.assertAllLinked의 기존 전체 연결 검증은 남는다.
 - **Hook 복사본**: `rememberStateValue()`는 첫 변경 setter가 값을 쓰기 전에 그 State 슬롯의 이전 값만 기록한다. 전체 슬롯 복사본은 예약 콜백이 시작되어 `update()`가 render를 시작하기 전에 만든다. 그 시점에는 직전 commit의 효과 실행이 끝나 cleanup·deps가 확정되어 있다. 성공·실패와 무관하게 `update()`의 `finally`에서 두 기록을 모두 버린다. Patch 실패만 예외적으로 복사본으로 필드를 되돌린 뒤 State 이전 값으로 덮어쓴다(P2-FAIL-03).
 - **effect 시점**: `runEffects()`는 `finally` 밖에서 호출한다. effect가 setter를 호출하면 State 이전 값만 새로 기록하고, 다음 microtask에서 효과 실행이 끝난 슬롯을 복사한다.
 
@@ -253,23 +255,26 @@ Component 반환값은 `appendChildValue()`의 무시 값 제외·배열 펼침�
 이벤트는 요소별 직접 연결이다. 루트 위임을 쓰지 않는다. 최초 연결과 갱신을 분리해, 화면 데이터가 같아도 handler 교체·제거를 반영한다.
 
 ```text
-renderNode(element)                          [P1]
+renderNode(vnode, context?)                  [P1]
+├─ context.recordVNode(vnode)                요소 DOM 연결 후 작업용 WeakMap 기록
 └─ vnode.events가 있으면
-   └─ bindEvents(element, events)
-      ├─ nodeEvents.set(element, events)     WeakMap 기록
-      └─ eventName마다 element.addEventListener(eventName, listener)
+   └─ bindEvents(element, events, context?)
+      ├─ original·wrapper·requestInputCheck 기록
+      └─ input/change는 wrapper, 그 외·context 없음은 원본 listener 연결
 
 update()
-└─ syncEvents(nextRoot)
+└─ syncEvents(nextRoot, context)
    └─ nextRoot.childNodes 순회
       └─ syncNodeEvents(node)
          ├─ 요소 VNode면 syncElementEvents(node)
          │  ├─ node.dom === null → 오류
          │  ├─ node.dom이 Element가 아니면 → 오류
-         │  └─ replaceNodeEvents(node.dom, node.events ?? {})
+         │  ├─ context.recordVNode(node)
+         │  └─ replaceNodeEvents(node.dom, node.events ?? {}, context)
          │     ├─ 이전 기록과 다음 map 비교
-         │     ├─ 바뀐·사라진 listener → removeEventListener
-         │     ├─ 새·바뀐 listener → addEventListener
+         │     ├─ 원본 함수·요청 콜백 정체성이 같으면 wrapper 재사용
+         │     ├─ 바뀐·사라진 wrapper → removeEventListener
+         │     ├─ 새·바뀐 wrapper → addEventListener
          │     └─ 다음 map이 비면 기록 삭제, 아니면 새 map 기록
          └─ 자식 VNode 재귀
 ```
@@ -283,12 +288,12 @@ sequenceDiagram
     participant UP as update
     participant SE as syncEvents
 
-    RN->>BE: 새 요소 + VNode.events
-    BE->>WM: set(element, events)
-    BE->>DOM: addEventListener(eventName, listener)
+    RN->>BE: 새 요소 + VNode.events + context
+    BE->>WM: original·wrapper·요청 콜백 기록
+    BE->>DOM: 실제 wrapper 또는 원본 연결
     Note over RN,DOM: 최초 표시와 insert/replace의 새 노드
 
-    UP->>SE: syncEvents(nextRoot)
+    UP->>SE: syncEvents(nextRoot, context)
     SE->>SE: next 트리 순회
     SE->>WM: get(element)
     SE->>DOM: 바뀐·사라진 listener remove
@@ -302,6 +307,12 @@ sequenceDiagram
 - 새로 만든 노드는 `renderNode()`가 이미 `bindEvents()`로 기록했으므로 `syncEvents()`의 비교 결과가 같음이 된다. 중복 연결이 생기지 않는다.
 - `syncEvents()`는 `diff()`가 유지 노드의 `dom`을 연결한 뒤에 호출한다. 그래야 유지 노드의 실제 DOM을 찾을 수 있다.
 - 요소가 사라지면 WeakMap 항목은 GC 대상이 된다. 별도 해제 순회를 두지 않는다.
+- 최신 VNode 기록은 FunctionComponent별 WeakMap, listener 기록은 events.ts의 WeakMap이다.
+  handler 제거가 최신 VNode 조회 정보의 삭제를 의미하지 않는다.
+- 입력 wrapper는 target을 먼저 저장하고 조합 여부를 반영한 뒤 원본 handler를 호출한다.
+  정상 종료 뒤에만 기억한 requestInputCheck를 호출한다. handler 예외의 확대된 정책은 미확정이다.
+- 값·선택 보정 세부 호출은 [설계](p2_input_sync_design.md) 및 `patch.ts`의
+  applyPropertyChanges → applySelection → mapSelection을 따른다.
 
 ## 6. 실패 경계
 
@@ -381,14 +392,18 @@ applyPatch 실패
 | --- | --- | --- | --- | --- | --- |
 | `FunctionComponent` | 내부 | `component`, `container` | 인스턴스 | `hooks`·`cursor`·`phase`·`currentVDOM`·`hooksBeforeUpdate` 보관 | `startApp` |
 | `mount` | 내부 | 없음 | `void` | 최초 render·DOM 생성·현재 VDOM 지정·effect 실행 | `startApp` |
-| `update` | 내부 | 없음 | `void` | 재렌더·Diff·Patch·이벤트 동기화·현재 VDOM 교체·effect 실행 | 예약 콜백 |
-| `applyPatchOrRestore` | 내부 | `instance`, `previousRoot`, `nextRoot`, `changes` | `void` | `applyPatch` 실행, 실패 시 복원 경계 호출 | `update`에서 변경 명령이 있을 때 |
+| `update` | 내부 | `inputTargets`(기본 빈 Set) | `void` | 재렌더·Diff·대상 확인·Patch·이벤트 동기화·VDOM/WeakMap 확정·effect | `runScheduledUpdate` |
+| `runScheduledUpdate` | 내부 | 없음 | `void` | 이번 대상·재렌더 여부 분리 후 경로 선택 | 예약 콜백 |
+| `checkInputTargets` | 내부 | 대상 Set | `void` | 현재 VDOM 기준 대상 확인·필요한 Patch만 | 재렌더 요청 없는 예약 |
+| `requestInputCheck` | 내부 콜백 | `target: Element` | `void` | 해당 인스턴스의 대상 Set 기록·예약 | 입력 wrapper |
+| `createEventContext` | 내부 | 작업용 WeakMap | `EventContext` | 기록 콜백·안정된 확인 요청 콜백 제공 | mount·update·복구 |
+| `applyPatchOrRestore` | 내부 | `instance`, `previousRoot`, `nextRoot`, `changes`, `context` | `void` | `applyPatch` 실행, 실패 시 복원 경계 호출 | 재렌더·대상 확인의 변경 명령이 있을 때 |
 | `restorePatchFailure` | 내부 | `instance`, `previousRoot` | `void` | 화면·훅 슬롯 복원, 예약 플래그 해제 | `applyPatch` catch |
 | `restoreLastCommittedRoot` | 내부 | `instance`, `previousRoot` | `void` | 마지막 성공 VDOM으로 컨테이너 재생성, 복원 오류 무시 | `restorePatchFailure` |
 | `renderComponent` | 내부 | `instance`, `phase` | `VNode[]` | Hook 문맥 설정·Component 실행·개수 검사·반환값 정규화 | `mount`·`update` |
 | `renderChild` | 내부(index.ts) | `component: (props: never) => unknown`, `props: unknown`, `children: unknown[]` | `VNode[]` | 여분 인자 선거부, 소유자 null에서 자식 실행·기존 반환 정규화, finally 직전 소유자 복원 | 공개 h의 함수 분기 |
 | `createVRoot` | 내부 | `nodes: VNode[]` | `VRoot` | `dom: null`인 비교 루트 생성 | `renderComponent` 직후 |
-| `scheduleUpdate` | 내부 | `instance` | `void` | 인스턴스별 1회 microtask 예약 | 변경된 setter |
+| `scheduleUpdate` | 내부 | `instance` | `void` | 인스턴스별 1회 microtask 예약 | 변경된 setter·requestInputCheck |
 | `runEffects` | 내부 | `instance` | `void` | effect 슬롯을 호출 순서대로 실행 | `mount`·`update`의 commit 뒤 |
 
 ### 7.3 Hook 내부
@@ -428,7 +443,7 @@ applyPatch 실패
 | `classifyProps` | 내부 | `tagName`, `props` | `{ attributes, properties, events }` | props 전체 분류 | `h` |
 | `classifyProp` | 내부 | `classified`, `tagName`, `name`, `value` | `void` | 이벤트 → property → attribute 순 판정 | `classifyProps` |
 | `isEventProp` | 내부 | `name` | `boolean` | `on` 접두사 검사 | `classifyProp` |
-| `isPropertyProp` | 내부 | `tagName`, `name` | `boolean` | `propertySchema` 포함 검사 | `classifyProp` |
+| `isPropertyProp` | 내부 | `tagName`, `name` | `boolean` | 명시적 선택 이름 또는 propertySchema 포함 검사 | `classifyProp` |
 | `normalizeAttributeName` | 내부 | `name` | `string` | `className`→`class` | `classifyProp` |
 | `addAttribute` | 내부 | `attributes`, `name`, `value` | `void` | 생략·boolean·객체 오류·문자열 변환 | `classifyProp` |
 | `addEvent` | 내부 | `events`, `propName`, `value` | `void` | 이벤트 이름 변환·값 검사·원본 함수 저장 | `classifyProp` |
@@ -442,20 +457,23 @@ applyPatch 실패
 
 | 이름 | 경계 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- | --- |
-| `bindEvents` | 모듈 경계 | `element`, `events` | `void` | WeakMap 기록 + 최초 listener 연결 | `renderNode` |
-| `syncEvents` | 모듈 경계 | `root: VRoot` | `void` | next 트리의 handler 연결을 기록과 맞춤 | `update`의 Patch 뒤 |
-| `syncNodeEvents` | 내부 | `node: VNode` | `void` | 요소면 동기화, 자식 재귀 | `syncEvents` |
-| `syncElementEvents` | 내부 | `node: VNode` | `void` | `dom` 연결 검사 후 요소 동기화 | `syncNodeEvents` |
-| `replaceNodeEvents` | 내부 | `element`, `nextEvents` | `void` | 이전 기록과 비교해 add/remove, 빈 map이면 기록 삭제 | `syncElementEvents` |
+| `bindEvents` | 모듈 경계 | `element`, `events`, `context?` | `void` | 원본·실제 연결 함수 기록 + 최초 연결 | `renderNode` |
+| `syncEvents` | 모듈 경계 | `root: VRoot`, `context?` | `void` | next 트리 handler·작업용 VNode 기록 동기화 | `update`의 Patch 뒤 |
+| `syncNodeEvents` | 내부 | `node: VNode`, `context?` | `void` | 요소면 동기화, 자식 재귀 | `syncEvents` |
+| `syncElementEvents` | 내부 | `node: VNode`, `context?` | `void` | DOM 연결 검사·recordVNode·연결 교체 | `syncNodeEvents` |
+| `replaceNodeEvents` | 내부 | `element`, `nextEvents`, `context?` | `void` | 원본/콜백 정체성 비교·실제 wrapper add/remove | `syncElementEvents` |
+| `isComposing` | 모듈 경계 | `element` | `boolean` | 요소별 조합 여부 조회 | 대상 비교·Patch |
+| `collectInputChanges` | 모듈 경계 | 대상 Set, 성공 WeakMap, 기존 changes | `DiffCommand[]` | 실제 지정값 비교·기존 update와 보정 명령 합류 | update·checkInputTargets |
+| `mapSelection` | 모듈 경계 | 실제 이전/다음 문자열, 선택 | `SelectionRange` | 표시 문자 대응으로 양 끝 이동 | Patch 값 쓰기 이후 |
 
 ### 7.6 Phase 1 재사용
 
 | 이름 | 경계 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- | --- |
-| `renderChildren` | P1 | `root: VRoot`, `container` | `void` | 컨테이너 교체·전체 DOM 생성·루트 연결 | `mount`·복원 |
-| `renderNode` | P1 | `vnode: VNode` | `Node` | DOM 생성·참조 연결·속성·properties·이벤트 연결 | `renderChildren`·Patch |
+| `renderChildren` | P1 확장 | `root: VRoot`, `container`, `context?` | `void` | 컨테이너 교체·전체 DOM 생성·루트 연결 | `mount`·복원 |
+| `renderNode` | P1 확장 | `vnode: VNode`, `context?` | `Node` | DOM 생성·선택 반영·recordVNode·이벤트 연결 | `renderChildren`·Patch |
 | `diff` | P1 | `previousRoot`, `nextRoot` | `DiffCommand[]` | 변경 명령 계산·유지 노드 `dom` 연결 | `update` |
-| `applyPatch` | P1 | `previousRoot`, `nextRoot`, `changes` | `VRoot` | 실제 DOM 변경·새 노드 연결·전체 연결 검증 | `applyPatchOrRestore` |
+| `applyPatch` | P1 확장 | `previousRoot`, `nextRoot`, `changes`, `context?` | `VRoot` | 실제 DOM·선택 변경·새 노드 연결·전체 연결 검증 | `applyPatchOrRestore` |
 
 ## 8. 테스트 연결
 
@@ -469,5 +487,10 @@ applyPatch 실패
 | 갱신·이벤트 동기화 | UPD-01–UPD-06 | `tests/integration/p2/app.test.ts` |
 | 실패 경계 | ERR-01–ERR-03 | `tests/integration/p2/errors.test.ts` |
 | 사용자 흐름 | FLOW-01–FLOW-03 | `tests/integration/p2/app.test.ts` |
+| 입력 동기화·커서·명시 선택·안전 경계 | INPUT·CARET·SELECT·GUARD | `tests/integration/p2/controlled-input.test.ts` |
+| 회원가입 전체 흐름 | DEMO-03/04 및 기존 전환·붙여넣기 | `tests/integration/p2/signup-demo.test.ts` |
 
-현재 테스트 명세 ID는 41개이고 진행표 41행 모두 통과다. Phase 2 실행은 100개(h 26·hooks 50·app 16·errors 8), 전체는 26개 파일 293개(Phase 1 193개 포함) 통과다. 타입 전용 h.types.ts는 실행 수에 포함하지 않는다. 이전 명세 ID 33개·Phase 2 실행 77개·전체 270개는 변경 전 기준선이다. 상세 증거와 검토·빌드 기록은 [진행표](p2_test_boards.md)와 [계획 실행 기록](p2_component_boundary_plan.md)을 따른다. jsdom 검증과 빌드 성공을 사용자 브라우저 실화면 검증으로 확대하지 않는다.
+기존 명세 41행·Phase 2 실행100개·Phase 1 실행193개는 유지한다. 회원가입4개와 새 입력57개를
+포함한 전체 실행은 28개 파일·354개다. 타입 전용 h.types.ts는 실행 수에 포함하지 않는다.
+최신 전체 검사·브라우저 확인·코드 리뷰는 [진행표](p2_test_boards.md)를 따른다. jsdom 검증을
+실제 IME·모든 브라우저·모든 변환의 의도 복원 보장으로 확대하지 않는다.

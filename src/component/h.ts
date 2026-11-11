@@ -4,6 +4,7 @@
  * index.ts는 h를 re-export하고, Component 반환값과 오류 문구에 이 모듈의 helper를 쓴다.
  */
 import { propertySchema } from '../vdom/create';
+import { isSelectionProperty } from '../vdom/properties';
 import type {
   VNode,
   VNodeAttribute,
@@ -133,6 +134,9 @@ function isEventProp(name: string): boolean {
 }
 
 function isPropertyProp(tagName: string, name: string): boolean {
+  // 명시적 선택 선언은 attribute가 아니라 properties로 전달한다. 자동 읽기와 무관하다.
+  if (isSelectionProperty(name)) return true;
+
   return (propertySchema[tagName] ?? []).includes(name);
 }
 
