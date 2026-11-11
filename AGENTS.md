@@ -80,3 +80,17 @@ c. 바뀐 부분만 실제 DOM 에 반영합니다. (Patch)
 - 테스트 영역에 다양한 태그와 요소를 추가하여 여러 동작과 변화를 확인합니다.
 - 엣지 케이스를 최대한 고려합니다.
 - 이력서와 포트폴리오에 포함할 수 있을 만큼 완성도 높은 수준으로 구현합니다.
+
+## Agent skills
+
+### Issue tracker
+
+팀 GitHub 저장소에서 이슈를 관리한다. 자세한 내용은 `docs/agents/issue-tracker.md`를 따른다.
+
+### Triage labels
+
+기본 분류 표식을 사용한다. 대응 관계는 `docs/agents/triage-labels.md`를 따른다.
+
+### Domain docs
+
+단일 맥락 문서 구조를 사용한다. 참조 규칙은 `docs/agents/domain.md`를 따른다.

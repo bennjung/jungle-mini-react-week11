@@ -1,6 +1,6 @@
 import type { VNode, VNodeAttribute, VNodeProperties, VRoot } from './types';
 
-const propertySchema: Readonly<Record<string, readonly string[]>> = {
+export const propertySchema: Readonly<Record<string, readonly string[]>> = {
   INPUT: ['value', 'checked', 'indeterminate'],
   TEXTAREA: ['value'],
   SELECT: ['value'],

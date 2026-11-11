@@ -1,3 +1,4 @@
+import { bindEvents } from './events';
 import type {
   DiffCommand,
   UpdateData,
@@ -53,6 +54,12 @@ export function renderNode(vnode: VNode): Node {
   }
 
   applyProperties(element, vnode.properties);
+
+  // 새 노드의 handler는 DOM을 만든 직후 연결한다. 갱신 시점의 비교 기준도 이 기록이다.
+  if (vnode.events) {
+    bindEvents(element, vnode.events);
+  }
+
   return element;
 }
 
