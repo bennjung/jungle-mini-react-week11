@@ -257,6 +257,33 @@
 - **최종 실행:** 보완 후 대상 3개 파일 84개·npm run typecheck 통과. 주 담당자와 문서 담당자 `npm run check` 재실행 모두 타입 검사 통과·26개 파일 293개 통과. 주 담당자 `npm run build`도 tsc --noEmit + vite build 성공.
 - **검증 한계:** DOM 관찰은 jsdom 자동 테스트다. 사용자 브라우저 실화면 검증은 하지 않았다. 직접 Child(props) 자동 감지·Proxy/특수 반복자 전체·새 렌더 도중 setter 정책까지 보장하지 않는다. 정규화 중 소유자 차단 증거는 배열 인덱스 getter 입력 범위다.
 
+## P2-DEV-01 — 데모별 개발 서버 진입 스크립트
+
+- **상태:** accepted — 구현 완료
+- **날짜:** 2026-11-11
+- **사용자 방향:** `npm run dev`로 고양이 데모를 바로 열고, 나머지 데모도 URL을 찾지 않고 명령 하나로 실행한다. 기존 Phase 1/Phase 2 포트 분리는 유지한다.
+- **결정:**
+  - `npm run dev`는 고양이 데모(`/phase2-cat.html`)를 자동으로 연다.
+  - Phase 1 편집기는 `npm run dev:phase1`(`/main.html`, 5173)로 분리한다.
+  - Phase 2 카운터와 검증 데모는 각각 `dev:counter`, `dev:events`, `dev:hooks`, `dev:input`, `dev:select`로 실행하며, 기존 `vite.phase2.config.ts`와 5174 포트를 그대로 사용한다.
+  - 기존 `dev:phase2`, `dev:phase2:counter` 이름은 위 이름으로 대체한다.
+- **이유:** 화면마다 URL을 직접 찾아가는 대신 명령 하나로 해당 데모를 바로 확인하기 위해서다. 두 포트를 유지하면 Phase 1과 Phase 2 화면을 동시에 띄워 비교할 수 있다.
+- **인터페이스:** `package.json` scripts, 각 스크립트의 `--open` 경로, `vite.config.ts`의 `server.open` 제거(스크립트가 열 경로를 소유).
+- **영향 범위:** `package.json`, `vite.config.ts`, `README.md`, `src/phase2/cat.ts`, `src/phase2/main.ts`, `docs/p1_decisions.md`의 실행 명령 표기, `docs/p1_history_handler_design.md`의 수동 시나리오 명령.
+- **미확정:** `npm run build`의 입력은 여전히 `main.html` 하나다. 데모 페이지를 배포 빌드에 포함할지는 정하지 않았다.
+
+## P2-DEMO-SIGNUP-01 — 고양이·회원가입 단일 페이지 입력 시연
+
+- **사용자 승인:** 고양이를 유지하고 회원가입 버튼을 연결한다. 이메일 공백 제거의 엣지 케이스를 보여준다. 별도 HTML로 이동하지 않고 같은 페이지에서 VDOM 갱신을 시연한다.
+- **선택:** 기존 고양이 루트에 화면·이메일 State를 둔다. 회원가입 자식은 props만 사용한다. 모든 Hook은 화면 분기 전에 같은 순서로 호출한다. 기존 공개 h/startApp/useState/useEffect와 Diff·Patch를 재사용하고 엔진은 변경하지 않는다.
+- **전환·수명:** 문서 이동 없이 같은 #app에서 화면을 전환한다. 고양이 State는 유지하며 pointer listener는 화면 전환 시 정리하고 돌아오면 다시 연결한다. 이메일 관찰 listener도 전환 시 정리한다.
+- **입력 범위:** 공백 제거는 `setEmail(input.value.replace(/\s/g, ''))`만 사용한다. 실제 입력값·커서는 강제 복원하지 않는다. 커서 관찰을 위해 text 입력에 inputmode=email을 사용해 브라우저 email 타입 자체의 정제와 구분한다. 실제 계정 생성·인증·서버 요청은 없다.
+- **관찰:** 기존 입력 검증 데모처럼 엔진 바깥 output에 State·실제 입력값·커서를 표시한다. 관찰 자체는 State를 갱신하지 않는다. 이벤트 handler 재연결로 listener 순서가 바뀔 수 있고 브라우저가 listener 사이에 microtask를 비울 수 있어, 다음 task에서 엔진 반영 후 읽는다. 한 microtask만 사용한 초기 관찰은 이전 State를 표시했고, 자동 검증과 실제 브라우저 확인으로 보완했다.
+- **데모 테스트 계약:** `tests/integration/p2/signup-demo.test.ts`는 기존 명세 테스트를 대체하지 않는다. 같은 루트·URL에서 회원가입 전환과 고양이 상태 유지, ` cat @example.com `의 공백 제거와 입력 DOM 재사용, 빈 입력에 공백만 넣었을 때 State와 DOM 불일치, 중간에 ` x `를 넣었을 때 변환 후 커서 끝 이동을 관찰한다. 뒤의 두 항목은 해결 완료가 아니라 현재 경계를 재현하는 검사다.
+- **테스트 선행:** 진입 파일 부재로 최초 실행이 중단된 경우와, 빈 진입점에서 회원가입 입력 부재로 네 항목이 실패한 경우를 구분했다. 구현 후 같은 네 항목이 통과했다.
+- **최종 검증:** `npm run check` 타입 검사와 27개 파일·297개 테스트 통과(기존 293개 + 데모 4개). 실제 Chromium에서 같은 문서(timeOrigin)·같은 #app 참조 유지, 공백 제거 붙여넣기, 중간 공백 입력 시 State/DOM 불일치, 중간 ` x ` 삽입 시 `caxt@example.com`과 커서 5→16 이동을 확인했다. 실제 한글 조합·모든 브라우저·실제 회원가입은 검증하지 않았다.
+- **README:** 다른 작업에서 재구성된 본문을 보존하고 전화번호 예시·데모만 회원가입 이메일로 동기화했다. 기존 전체 흐름 그림은 가로 배치로 바꿨다. Phase 1 수정 제한 문서는 변경하지 않는다.
+
 ## 남은 문서 충돌
 
 아래 항목은 이번 작업에서 수정하지 않았다. 수정 제한 문서이거나, 확정된 설계와 명세 문면의 관계를 사용자가 판단해야 하는 항목이다.

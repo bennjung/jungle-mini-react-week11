@@ -1,4 +1,5 @@
 import { h, startApp, useEffect, useMemo, useState } from '../component';
+import { observeSignupInput, Signup } from './signup';
 
 type MoodKey = 'shy' | 'happy' | 'purr';
 
@@ -85,6 +86,8 @@ function App() {
   const [catName, setCatName] = useState('나비');
   const [strokes, setStrokes] = useState(0);
   const [hearts, setHearts] = useState<Heart[]>([]);
+  const [screen, setScreen] = useState<'cat' | 'signup'>('cat');
+  const [email, setEmail] = useState('');
 
   const displayName = useMemo(() => catName.trim() || '고양이', [catName]);
   const mood = useMemo<Mood>(() => {
@@ -115,13 +118,16 @@ function App() {
   };
 
   useEffect(() => {
-    document.title = `${displayName} 쓰다듬기 — ${strokes}회`;
+    document.title = screen === 'signup'
+      ? '회원가입 — 고양이 쓰다듬기'
+      : `${displayName} 쓰다듬기 — ${strokes}회`;
     console.log(`[cat] ${displayName} / strokes=${strokes}`);
-  }, [displayName, strokes]);
+  }, [displayName, strokes, screen]);
 
   // 프레임워크의 h()는 click/input/change만 지원한다. 문지르기 동작은
   // useEffect로 실제 DOM에 pointer 이벤트를 붙여서 만든다.
   useEffect(() => {
+    if (screen !== 'cat') return;
     const cat = document.querySelector<HTMLElement>('.cat');
     if (!cat) return;
 
@@ -172,7 +178,25 @@ function App() {
       cat.removeEventListener('pointerup', resetDistance);
       cat.removeEventListener('pointerleave', resetDistance);
     };
-  }, []);
+  }, [screen]);
+
+  useEffect(() => {
+    if (screen === 'signup') return observeSignupInput();
+  }, [screen]);
+
+  // Hook 개수와 순서는 두 화면에서 동일하다. 자식은 props만 사용한다.
+  if (screen === 'signup') {
+    return h(Signup, {
+      email,
+      onBack: () => setScreen('cat'),
+      onEmailInput: (event: Event) => {
+        const input = event.target;
+        if (input instanceof HTMLInputElement) {
+          setEmail(input.value.replace(/\s/g, ''));
+        }
+      }
+    });
+  }
 
   return h(
     'main',
@@ -182,6 +206,7 @@ function App() {
       { className: 'hero' },
       h('p', { className: 'eyebrow' }, 'Phase 2 — Cat Petting Demo'),
       h('h1', { className: 'hero__title' }, '고양이를 쓰다듬어 보세요'),
+      h('button', { type: 'button', className: 'signup-link', onClick: () => setScreen('signup') }, '회원가입 →'),
       h(
         'p',
         { className: 'hero__description' },
@@ -293,7 +318,7 @@ function App() {
     h(
       'footer',
       { className: 'footer' },
-      'Phase 1 편집기 데모는 npm run dev (main.html)에서 그대로 유지됩니다.'
+      'Phase 1 편집기 데모는 npm run dev:phase1 (main.html)에서 확인할 수 있습니다.'
     )
   );
 }

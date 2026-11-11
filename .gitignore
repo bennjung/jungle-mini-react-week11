@@ -16,3 +16,5 @@ coverage/
 
 # Team wiki (separate git repository)
 wiki/
+
+.agents/

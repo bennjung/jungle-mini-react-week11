@@ -65,6 +65,83 @@ body {
   color: var(--muted);
 }
 
+.signup-link {
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+  justify-self: start;
+  padding: 10px 20px;
+  border-radius: 12px;
+  background: var(--accent);
+  color: var(--bg);
+  font-weight: 700;
+  text-decoration: none;
+}
+
+.signup-link:focus-visible,
+.signup-back:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+
+.signup-app,
+.signup-observation {
+  width: min(620px, calc(100% - 40px));
+  margin-inline: auto;
+}
+
+.signup-back {
+  padding: 0;
+  border: 0;
+  background: transparent;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+  margin-bottom: 24px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.signup-form h2 {
+  margin: 0 0 24px;
+  font-size: 1.2rem;
+}
+
+.signup-summary {
+  overflow-wrap: anywhere;
+}
+
+.signup-summary strong {
+  color: var(--accent);
+}
+
+.signup-guide summary,
+.signup-observation summary {
+  cursor: pointer;
+}
+
+.signup-guide li + li {
+  margin-top: 10px;
+}
+
+.signup-observation {
+  display: none;
+  padding-bottom: 40px;
+  color: var(--muted);
+}
+
+body:has(#signup-email) .signup-observation {
+  display: block;
+}
+
+#email-observation {
+  display: block;
+  margin-top: 12px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font-variant-numeric: tabular-nums;
+}
+
 .layout {
   display: grid;
   grid-template-columns: minmax(0, 1.05fr) minmax(300px, 0.95fr);

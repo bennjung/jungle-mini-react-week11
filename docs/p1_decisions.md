@@ -99,7 +99,7 @@
 - **결정:** TypeScript strict, Vite, Vitest + jsdom으로 구현·테스트한다. Playwright는 사용하지 않는다. npm lockfile을 사용하고 앱 런타임 의존성은 추가하지 않는다.
 - **이유:** VNode·DiffCommand 계약을 타입으로 고정하고, 브라우저와 유사한 DOM 환경에서 단위·통합 테스트를 실행하기 위해서다.
 - **인터페이스:**
-  - `npm run dev` — `main.html` 개발 서버
+  - `npm run dev` — `main.html` 개발 서버 (2026-11-11부터 Phase 1은 `npm run dev:phase1`, `npm run dev`는 고양이 데모)
   - `npm run typecheck` — `tsc --noEmit`
   - `npm test` — Vitest + jsdom
   - `npm run check` — typecheck + test

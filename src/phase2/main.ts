@@ -180,7 +180,7 @@ function App() {
     h(
       'footer',
       { className: 'footer' },
-      'Phase 1 편집기 데모는 npm run dev (main.html)에서 그대로 유지됩니다.'
+      'Phase 1 편집기 데모는 npm run dev:phase1 (main.html)에서 확인할 수 있습니다.'
     )
   );
 }

@@ -469,7 +469,7 @@ src/main.ts
 ### 브라우저 수동 시나리오
 
 ```text
-npm run dev
+npm run dev:phase1
 → main.html 로드
 → 샘플이 실제 영역에 1회 표시되는지 확인
 → 편집기 수정
