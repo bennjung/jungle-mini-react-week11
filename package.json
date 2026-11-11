@@ -4,6 +4,8 @@
   "type": "module",
   "scripts": {
     "dev": "vite",
+    "dev:phase2": "vite --config vite.phase2.config.ts --open /phase2-cat.html",
+    "dev:phase2:counter": "vite --config vite.phase2.config.ts --open /phase2.html",
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview",
     "typecheck": "tsc --noEmit",
