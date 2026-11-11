@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { h, startApp, useEffect, useState } from '../../../src/component';
+import { h, startApp, useEffect, useMemo, useState } from '../../../src/component';
 import { syncEvents } from '../../../src/vdom/events';
 import { applyPatch } from '../../../src/vdom/patch';
 import type { VNode } from '../../../src/vdom/types';
@@ -229,6 +229,115 @@ describe('ERR-02 applyPatch 실패는 마지막 성공 VDOM으로 복구하고 �
     expect(container.querySelector('span')!.textContent).toBe('C');
     // 실행 기록이 복원되면 effect를 다시 실행하지 않는다. 다시 실행되면 log가 늘어난다.
     expect(log).toEqual(['effect']);
+  });
+});
+
+describe('ERR-03 갱신 중 자식 Hook 오류는 이전 DOM과 증가한 State를 유지한다', () => {
+  it('첫 예약 콜백은 Child 진입 후 실패하고 다음 갱신은 count=2로 정상 반영된다', () => {
+    const entered: number[] = [];
+    const effectRuns: number[] = [];
+    let afterHook = 0;
+
+    function expectOutsideHooksRejected(): void {
+      let calculate = 0;
+      let effect = 0;
+
+      expect(() => useState(0)).toThrow(/useState/);
+      expect(() =>
+        useMemo(() => {
+          calculate += 1;
+          return 1;
+        }, [])
+      ).toThrow(/useMemo/);
+      expect(() =>
+        useEffect(() => {
+          effect += 1;
+        }, [])
+      ).toThrow(/useEffect/);
+      expect(calculate).toBe(0);
+      expect(effect).toBe(0);
+    }
+
+    function Child({ count }: { count: number }): VNode {
+      entered.push(count);
+
+      if (count === 1) {
+        useState(99);
+      }
+
+      // Hook 다음 문장은 거부되면 실행되지 않아야 한다.
+      afterHook += 1;
+      return h('span', {}, count);
+    }
+
+    function App(): VNode {
+      const [count, setCount] = useState(0);
+
+      useEffect(() => {
+        effectRuns.push(count);
+      }, [count]);
+
+      return h(
+        'section',
+        {},
+        h(Child, { count }),
+        h('button', { onClick: () => setCount((prev) => prev + 1) }, 'tick')
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    const section = container.querySelector('section')!;
+    const span = container.querySelector('span')!;
+    const text = span.firstChild!;
+    const button = buttonByText(container, 'tick');
+
+    expect(span.textContent).toBe('0');
+    expect(effectRuns).toEqual([0]);
+    expect(entered).toEqual([0]);
+    expect(afterHook).toBe(1);
+
+    applyPatchMock.mockClear();
+    syncEventsMock.mockClear();
+
+    const { scheduled, restore } = captureScheduledUpdates();
+    try {
+      button.click();
+      expect(scheduled).toHaveLength(1);
+      expect(() => scheduled[0]!()).toThrow();
+
+      // Child는 count=1로 실제 진입했지만 Hook 오류로 다음 문장은 실행되지 않는다.
+      expect(entered).toEqual([0, 1]);
+      expect(afterHook).toBe(1);
+      expect(span.textContent).toBe('0');
+      expect(container.querySelector('section')).toBe(section);
+      expect(container.querySelector('span')).toBe(span);
+      expect(span.firstChild).toBe(text);
+      expect(buttonByText(container, 'tick')).toBe(button);
+      expect(applyPatchMock).not.toHaveBeenCalled();
+      expect(syncEventsMock).not.toHaveBeenCalled();
+      expect(effectRuns).toEqual([0]);
+      expectOutsideHooksRejected();
+
+      button.click();
+      expect(scheduled).toHaveLength(2);
+      expect(() => scheduled[1]!()).not.toThrow();
+
+      expect(entered).toEqual([0, 1, 2]);
+      expect(afterHook).toBe(2);
+      expect(span.textContent).toBe('2');
+      expect(container.querySelector('section')).toBe(section);
+      expect(container.querySelector('span')).toBe(span);
+      expect(span.firstChild).toBe(text);
+      expect(buttonByText(container, 'tick')).toBe(button);
+      expect(applyPatchMock).toHaveBeenCalledTimes(1);
+      expect(syncEventsMock).toHaveBeenCalledTimes(1);
+      expect(effectRuns).toEqual([0, 2]);
+      expectOutsideHooksRejected();
+    } finally {
+      restore();
+    }
   });
 });
 

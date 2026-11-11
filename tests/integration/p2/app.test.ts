@@ -436,29 +436,49 @@ describe('FLOW-03 입력 요소의 value·checked가 properties를 거쳐 화면
 });
 
 describe('FLOW-02 자식이 props만 사용하고 부모 State 변경이 자식에 반영된다', () => {
-  it('자식 버튼 클릭이 부모 setter까지 연결된다', async () => {
-    function Child({ count, onIncrease }: { count: number; onIncrease: () => void }) {
+  it('함수 h 경계로 자식 버튼 클릭이 부모 setter까지 연결되고 DOM이 유지된다', async () => {
+    const received: Array<{ count: number; onIncrease: () => void }> = [];
+    const parentCallbacks: Array<() => void> = [];
+
+    function Child({
+      count,
+      onIncrease
+    }: {
+      count: number;
+      onIncrease: () => void;
+    }) {
+      received.push({ count, onIncrease });
       return h('button', { onClick: onIncrease }, count);
     }
 
     function App() {
       const [count, setCount] = useState(0);
+      const onIncrease = () => setCount((prev) => prev + 1);
+      parentCallbacks.push(onIncrease);
 
-      return h(
-        'div',
-        {},
-        Child({ count, onIncrease: () => setCount((prev) => prev + 1) })
-      );
+      return h('div', {}, h(Child, { count, onIncrease }));
     }
 
     const container = createContainer();
     startApp(App, container);
 
-    buttonByText(container, '0').click();
-    await flushUpdates();
-    buttonByText(container, '1').click();
+    const button = buttonByText(container, '0');
+    const text = button.firstChild!;
+
+    expect(received).toHaveLength(1);
+    expect(received[0]?.count).toBe(0);
+    expect(received[0]?.onIncrease).toBe(parentCallbacks[0]);
+
+    button.click();
     await flushUpdates();
 
-    expect(container.textContent).toBe('2');
+    expect(container.textContent).toBe('1');
+    expect(buttonByText(container, '1')).toBe(button);
+    expect(button.firstChild).toBe(text);
+
+    expect(received).toHaveLength(2);
+    expect(received[1]?.count).toBe(1);
+    expect(received[1]?.onIncrease).toBe(parentCallbacks[1]);
+    expect(parentCallbacks[0]).not.toBe(parentCallbacks[1]);
   });
 });

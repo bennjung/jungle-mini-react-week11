@@ -3,10 +3,11 @@
 기준: [p2_test_cases.md](p2_test_cases.md), [p2_function_flow.md](p2_function_flow.md), [wiki/Phase2-Design-merged.md](../wiki/Phase2-Design-merged.md)의 승인안.
 결정의 1차 자료는 GitHub 이슈 #55–#60의 구현 댓글과 #54의 구현 규칙 댓글이다. 이 문서는 그 결정을 티켓별로 다시 읽을 수 있게 정리하고, #61에서 확인한 전체 실행 결과와 남은 문서 충돌을 함께 남긴다.
 
-구현 코드의 공개 경계는 `src/component/index.ts`이고, `h()`와 VNode 값 정규화는 `src/component/h.ts`가 소유한다. `index.ts`가 `h`를 re-export하므로 사용자 코드의 import 경로는 그대로다. 이벤트 연결·동기화는 `src/vdom/events.ts`, VNode 타입은 `src/vdom/types.ts`에 있다. Phase 1의 Diff·Patch·`renderChildren`·`renderNode` 계약은 그대로 재사용한다.
+공개 경계는 `src/component/index.ts`다. 현재 구현·검증 완료 계약은 [P2-CHILD-01](#p2-child-01--자식-즉시-실행과-hook-소유자-차단)을 따른다. 문자열 요소 `h()`와 VNode 값 정규화는 `src/component/h.ts`를 재사용하고 공개 `h`의 분기와 내부 `renderChild`는 index.ts에 있다. 이전 단순 re-export 설명과 실행 수치는 각 결정 당시의 기록이다. 이벤트 연결·동기화는 `src/vdom/events.ts`, VNode 타입은 `src/vdom/types.ts`에 있다. Phase 1의 Diff·Patch·`renderChildren`·`renderNode` 계약은 그대로 재사용한다.
 
 ## P2-H-01 — h()의 태그·props·children 경계 (#55)
 
+- **현재 변경:** 함수 전체 거부 부분은 [P2-CHILD-01](#p2-child-01--자식-즉시-실행과-hook-소유자-차단)로 대체됨(superseded). 아래는 과거 구현·검증 기록이며 문자열 분기의 규칙은 유지한다.
 - **상태:** accepted — 구현·검증 완료
 - **날짜:** 2026-11-10
 - **결정:**
@@ -70,6 +71,7 @@
 
 ## P2-HOOK-01 — 훅 슬롯·cursor·종류/개수 검증 (#57, #58, #59)
 
+- **현재 변경:** 자식 실행을 루트 소유 문맥에서 구분하지 못하던 경계는 [P2-CHILD-01](#p2-child-01--자식-즉시-실행과-hook-소유자-차단)에서 보완한다. 아래 슬롯·개수·종류 규칙은 유지한다. 과거 통과 기록은 자식 차단 검증이 아니다.
 - **상태:** accepted — 구현·검증 완료
 - **날짜:** 2026-11-10
 - **결정:** Hook 기록은 호출 순서를 정체성으로 하는 슬롯 목록이다. `cursor`는 render 시작마다 0으로 돌아가고, mount에서만 새 슬롯을 만들 수 있다. update에서 Hook 개수가 늘거나 줄거나, 같은 위치의 종류(`state`/`memo`/`effect`)가 바뀌면 오류다. Hook은 Component 실행 중에만 호출할 수 있다.
@@ -192,6 +194,7 @@
 
 ## P2-STRUCT-01 — h() 모듈 분리와 자식 순회 공유 (#61)
 
+- **현재 변경:** 공개 h의 단순 re-export 부분만 [P2-CHILD-01](#p2-child-01--자식-즉시-실행과-hook-소유자-차단)로 대체됨(superseded). 기존 h.ts의 요소 생성·정규화 공유와 모듈 분리는 유지한다. 아래 구현·실행 결과는 당시 기록이다.
 - **상태:** accepted — 구현·검증 완료
 - **날짜:** 2026-11-11
 - **결정:**
@@ -220,9 +223,39 @@
   - `npm test` → 26개 파일, 268개 통과, exit 0, unhandled error 0. Phase 1 회귀는 22개 파일 193개 통과다.
   - `npm run check` → 타입 검사와 전체 테스트 통과, exit 0.
 - **검증:** 전체 26개 파일 268개 통과, unhandled error 0. Phase 2 대상 4개 파일 75개 통과. 수정 제한 문서 4개의 `git diff dev`가 빈 출력임을 확인했다. `git status`에서 이번 작업이 만든 문서 3개 외에 코드 파일 변경이 없음을 확인했다.
-- **수치 구분:** 테스트 명세 ID는 33개다. 이 항목의 75개·268개는 #61 검증 시점의 기록이다. 이후 P2-FAIL-03·P2-STRUCT-01에서 실행 단위 2개가 추가되어 현재 Phase 2 실행 단위는 77개다. 최신 전체 수치는 [p2_test_boards.md](p2_test_boards.md)를 따른다. 같은 ID를 여러 입력·시나리오로 나눈 테스트와 명세 ID 밖 보강 테스트가 포함되므로 테스트 ID와 실행 단위 수를 같게 기록하지 않는다. #61 본문의 36은 최초 테스트 작성 시점의 실행 단위 수이고, 구현·보강 과정에서 75개로 늘었다.
+- **수치 구분:** 당시 테스트 명세 ID는 33개였다. 이 항목의 75개·268개는 #61 검증 시점의 기록이다. 이후 P2-FAIL-03·P2-STRUCT-01에서 실행 단위 2개가 추가된 77개도 P2-CHILD-01 변경 전 기준선이다. 현재는 명세 ID 41개·Phase 2 실행 100개이며 최신 전체 수치는 [p2_test_boards.md](p2_test_boards.md)를 따른다. 같은 ID의 여러 입력과 보강 테스트가 포함되므로 명세 ID와 실행 수를 같게 기록하지 않는다. #61 본문의 36은 최초 작성 시점, 75개는 당시 보강 후 수치다.
 - **문서 경계 확인:** `git diff dev -- docs/p1_prd.md docs/p1_function_flow.md docs/p1_test_cases.md docs/p1_interfaces.md`가 빈 출력이다.
 - **영향 범위:** `docs/p2_decisions.md`, `docs/p2_function_flow.md`, `docs/p2_test_boards.md`.
+
+## P2-CHILD-01 — 자식 즉시 실행과 Hook 소유자 차단
+
+- **상태:** 사용자 승인 변경계약 — 구현·검증 완료. 독립 검토 2건 지적 보완 후 명세 검토자 최종 재검토에서 최초 4건 해결·새 핵심 회귀 없음 확인. 사용자 브라우저 실화면 검증은 미실행.
+- **날짜:** 2026-11-11
+- **사용자 방향:** 자식은 props만 쓰는 순수 함수이고 Hook은 루트만 소유한다는 요구를 실행 경계에서 지키되, 별도 컴포넌트 트리와 식별 계층은 도입하지 않는다.
+- **기존 표면 확인:** 기존 요소 `h`, `normalizeComponentResult`, `activeHookOwner`, 세 Hook의 `requireHookOwner`가 이미 있다. 새 노드 종류·슬롯 저장소 없이 이 경계만 연결하면 충분하다.
+- **결정:**
+  - 공개 `h`는 index.ts에서 문자열/함수를 분기한다. 문자열은 h.ts의 기존 요소 h를 import 별칭으로 재사용해 VNode를 반환한다. 함수는 즉시 한 번 실행하고 기존 반환 정규화로 VNode[]를 반환한다.
+  - 함수의 props 객체·내부 객체·콜백 참조를 그대로 전달하고 DOM props 분류를 하지 않는다. 생략·undefined·null의 런타임 값은 빈 객체다. 필수 props 타입 검증은 유지한다.
+  - 함수 분기의 세 번째 이후 인자는 실행 전 오류다. props.children 자동 병합은 지원하지 않으며 명시 props.children은 그대로 전달한다.
+  - 직전 activeHookOwner를 보관한 뒤 null로 바꾸고 자식 실행과 반환 정규화를 모두 수행한다. 정상·일반 예외·정규화 오류·Hook 오류 모두 finally로 직전 소유자를 복원한다. 부모 cursor·phase·슬롯은 건드리지 않으며 자식에 beginHooks/endHooks를 쓰지 않는다.
+  - ComponentVNode·resolve·자식 인스턴스·자식 key 식별은 추가하지 않는다. Child(props) 직접 호출 자동 감지는 지원하지 않는다.
+  - 반환 허용/거부는 기존 Component 규칙을 그대로 따른다. 함수 자체를 문자열 h의 children에 넣는 것은 계속 오류다.
+  - 콜백 props 실행 자체를 금지하지 않는다. 부모 setter를 자식 이벤트에 연결하는 것은 허용하며 렌더 도중 setter 정책·예약·렌더 실패 시 State 유지·Patch 복구 정책은 변경하지 않는다.
+- **이유:** 직접 호출만으로는 루트 실행 중 자식이 루트의 Hook 소유자를 빌릴 수 있다. h 함수 경계에서 소유자를 잠시 비우면 기존 세 Hook의 검사로 차단할 수 있고, finally 복원으로 자식 뒤 루트 Hook이 계속 같은 슬롯을 사용한다. 자식 트리를 저장할 필요가 없으므로 더 큰 resolve 설계는 도입하지 않는다.
+- **변경 이력:** P2-H-01의 함수 전체 거부, P2-STRUCT-01의 단순 re-export, 병합안의 자식 직접 호출 선택을 대체한다. 과거 기록과 도겸 원본은 보존한다.
+- **검증 계약:** 신규 H-09–11·HOOK-10–13·ERR-03, 변경 H-08·FLOW-02. 자세한 입력·사전 상태·관찰 시점·기대값·보존 조건은 [명세](p2_test_cases.md), 실행 순서는 [계획](p2_component_boundary_plan.md)을 따른다. 자식 진입·Hook 다음 문장 미실행·memo 계산/효과 0회가 함께 있어야 하며, 다른 종류 루트 Hook과 갱신 재사용으로 비공개 슬롯 비오염을 관찰한다. ERR-03은 기존 captureScheduledUpdates로 콜백 오류를 직접 검증한다.
+- **수치:** 현재 명세 ID 41개(기존 33+신규 8), 진행표 41행 통과. Phase 2 실행 100개(26+50+16+8), 전체 293개(Phase 1 193개 유지)다. 이전 전체 270개·Phase 2 77개 대비 +23이며 타입 전용 파일은 실행 수에서 제외한다.
+- **영향 범위:** 구현은 src/component/index.ts, 테스트는 h.test.ts·hooks.test.ts·app.test.ts·errors.test.ts 및 컴파일 전용 h.types.ts. 문서 6개를 실제 결과에 동기화했다. Phase 1 수정 제한 문서·도겸 원본·skills-lock.json은 변경하지 않는다. 이번 최종 문서 작업에서는 소스·테스트를 읽기만 했다.
+- **내부 선택과 이유:**
+  - 공개 h 오버로드 구현부는 문자열이면 기존 h.ts의 `h as createElementVNode`로 위임하고 함수이면 `renderChild(component, props, children): VNode[]`를 호출한다. 새 helper는 renderChild **1개**이며 기존 h.ts·normalizeComponentResult를 그대로 재사용한다. 순환 의존·중복 정규화·자식 슬롯이 필요 없다.
+  - renderChild는 여분 인자를 먼저 거부하고 직전 소유자 보관 → null → 실행+정규화 → finally 복원만 담당한다. 부모 cursor·phase·슬롯을 변경하지 않는다.
+  - 공개 제네릭 오버로드가 필수 props를 검사한다. 별도 unknown props 함수+null/undefined 오버로드와 무인자 함수 오버로드는 생략값 계약을 수용한다. 내부 `(props: never) => unknown` 및 `resolvedProps as never`는 이질적인 함수의 런타임 호출 처리를 내부로 한정하며 공개 props를 선택형으로 만들지 않는다.
+  - 기존 requireHookOwner의 오류 문구는 그대로 두었다. 동작 경계만 추가하고 루트 전용 문구로 바꾸지 않았다.
+- **테스트 선행·실패 구분:** H-09 첫 실행은 문자열 전용 함수 거부로 20개 중 1개 실패했고, 최소 분기+소유자 경계 구현 후 같은 명령으로 20개 통과했다. 나머지 이미 충족된 규칙은 첫 실행 통과로 기록한다. HOOK-12의 after 위치, HOOK-13의 render 횟수 기대값은 테스트 fixture 결함, EmptyChild·it.each 인자·미사용 변수는 타입 검사 오류로 구분한다. 제품의 변경 전 실패로 과장하지 않는다. HOOK-10은 owner=null 임시 제거 시 3개 실패·복원 후 3개 통과의 변이 검사로 민감도를 확인했다. 명령과 상세 이력은 [계획 실행 기록](p2_component_boundary_plan.md#실행-기록)에 보존했다.
+- **검토 반영:** 검토 2건은 제품 실행 로직 오류를 찾지 않았고 명세 입력·관찰 시점 누락을 지적했다. H-09 여분 인자 입력 원문, HOOK-10–13·ERR-03의 각 시점 바깥 Hook 거부, HOOK-12 갱신 후 로그/참조, HOOK-13 memo/getter의 두 State 중간·최종 화면을 보완했다. 명세 검토자 최종 재검토는 최초 4건 해결·새 핵심 회귀 없음으로 완료됐다.
+- **타입 검사 집계:** `tests/unit/p2/h.types.ts`의 assertHTypeContract는 실행하지 않는다. tsconfig의 tests 포함으로 컴파일하고 vitest의 tests/**/*.test.ts에는 포함되지 않는다. 중간 h.types.test.ts의 함수 존재 확인 1개는 제거했으므로 중간 전체 294개·Phase 2 101개를 최종 결과로 쓰지 않는다.
+- **최종 실행:** 보완 후 대상 3개 파일 84개·npm run typecheck 통과. 주 담당자와 문서 담당자 `npm run check` 재실행 모두 타입 검사 통과·26개 파일 293개 통과. 주 담당자 `npm run build`도 tsc --noEmit + vite build 성공.
+- **검증 한계:** DOM 관찰은 jsdom 자동 테스트다. 사용자 브라우저 실화면 검증은 하지 않았다. 직접 Child(props) 자동 감지·Proxy/특수 반복자 전체·새 렌더 도중 setter 정책까지 보장하지 않는다. 정규화 중 소유자 차단 증거는 배열 인덱스 getter 입력 범위다.
 
 ## 남은 문서 충돌
 

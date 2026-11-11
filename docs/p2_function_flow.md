@@ -1,7 +1,7 @@
 # Phase 2 함수 흐름 — Top down
 
 기준: [resc/phase2.md](../resc/phase2.md), [p2_test_cases.md](p2_test_cases.md), [p2_decisions.md](p2_decisions.md), [wiki/Phase2-Design-merged.md](../wiki/Phase2-Design-merged.md)의 승인안.
-이 문서는 구현 호출 구조를 위에서 아래로 설명한다. 함수 이름과 책임은 승인안에서 고정한 이름을 따르고, 나머지 helper는 구현 모듈 내부 이름이다. 코드를 보지 않아도 "누가 무엇을 언제 호출하는가"를 따라갈 수 있게 쓰는 것이 목적이다.
+이 문서는 현재 구현의 호출 구조를 위에서 아래로 설명한다. 자식 경계는 [승인 변경계약과 실행 기록](p2_component_boundary_plan.md)을 반영한다. `npm run check`로 타입 검사·전체 293개 실행 통과를 확인했고 사용자 브라우저 실화면 검증은 수행하지 않았다. 함수 이름과 책임은 승인안에서 고정한 이름을 따르고, 나머지 helper는 구현 모듈 내부 이름이다.
 
 표기:
 
@@ -11,11 +11,12 @@
 
 ## 1. 공개 경계와 전체 호출 지도
 
-공개 경계는 `src/component/index.ts` 하나다. `h()`와 VNode 값 정규화 helper는 `src/component/h.ts`에 있고, `index.ts`가 `h`를 re-export한다. `FunctionComponent`, `mount()`, `update()`는 공개하지 않는다.
+공개 경계는 `src/component/index.ts` 하나다. 공개 `h()`는 이 파일에서 문자열/함수를 분기한다. `src/component/h.ts`의 기존 요소 `h`는 `createElementVNode` 별칭으로 가져오고 기존 `normalizeComponentResult`도 재사용한다. 함수 분기는 내부 `renderChild` 하나가 담당한다. 이전 단순 re-export 구조는 대체됐다. `FunctionComponent`, `mount()`, `update()`와 `renderChild`는 공개하지 않는다.
 
 | 함수 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- |
 | `h(tagName, props, ...children)` | 태그 이름, props 객체(선택), 자식 값들 | 요소 `VNode` | props 분류, children 정규화, 문자열·숫자를 Text VNode로 변환 | Component render 안, 또는 정적 VNode를 만들 때 |
+| `h(Child, props)` | 자식 함수, 원본 props(생략/null은 빈 객체) | `VNode[]` | 자식 즉시 실행·반환 정규화 동안 Hook 소유자를 비우고 finally 복원 | 부모 실행 중 또는 루트 실행 밖 |
 | `startApp(component, container)` | 최상위 Component 함수, 표시할 `Element` | `void` | container 검증·1회 등록, 루트 `FunctionComponent` 준비, `mount()` 호출 | 앱 시작 1회 |
 | `useState(initialValue)` | 초기값 | `[현재 값, setter]` | 호출 순서 위치의 State 슬롯 조회·생성, 안정된 setter 반환 | Component 실행 중 |
 | `useMemo(calculate, deps)` | 계산 함수, 의존성 배열(필수) | 계산 결과 | deps가 같으면 캐시 재사용, 다르면 재계산 | Component 실행 중 |
@@ -164,7 +165,41 @@ flowchart TD
 
 ## 4. h() 흐름
 
-`h()`는 태그를 정규화하고, props를 이벤트·property·attribute로 나누고, children을 VNode 목록으로 정리해 요소 VNode 하나를 만든다. DOM은 만들지 않는다.
+공개 `h()`는 첫 인자를 분기한다. 문자열이면 기존 요소 `h`를 그대로 재사용한다. 함수이면 `renderChild`가 여분 인자를 먼저 거부하고 자식 실행과 반환 정규화 **전체**에서 Hook 소유자를 비운다. 두 분기 모두 DOM은 만들지 않는다. 아래 첫 지도는 현재 공개 분기, 두 번째는 기존 문자열 분기의 내부다.
+
+```text
+공개 h(type, props, ...children)             src/component/index.ts
+├─ 문자열 → createElementVNode(type, props, ...children) → VNode
+├─ 함수 → renderChild(type, props, children)
+│  ├─ 세 번째 이후 인자 존재 → 자식 실행 전에 오류
+│  ├─ 직전 activeHookOwner 보관
+│  ├─ activeHookOwner = null
+│  ├─ try
+│  │  ├─ Child(props ?? {})                 원본 props·객체·콜백 참조 유지
+│  │  └─ normalizeComponentResult(result)   기존 반환 규칙 → VNode[]
+│  └─ finally: activeHookOwner = 직전 소유자
+└─ 그 밖 → 잘못된 첫 인자 오류
+```
+
+함수 경계의 보존 조건:
+
+- `beginHooks`·`endHooks`를 자식에 호출하지 않는다. 루트 cursor·phase·슬롯을 건드리지 않는다. 손자가 종료하면 직전의 null로, 자식이 종료하면 루트로 복원한다.
+- 자식이 일반 예외를 던지거나 반환 정규화·Hook이 실패해도 동일한 finally 경계를 사용한다. 루트 `renderComponent`의 finally는 최종적으로 바깥 문맥을 해제한다.
+- 함수 props는 DOM attribute·property·event로 분류하지 않는다. 객체와 콜백을 그대로 넘긴다. `props.children` 자동 병합을 제공하지 않으며 명시한 children은 일반 props다. 필수 props의 타입 검증은 유지한다.
+- 반환은 기존 VNode·중첩 배열·빈 값만 허용한다. 원시 문자열·숫자(빈 문자열 포함)·일반 객체·함수·DOM·Promise는 오류다.
+- `ComponentVNode`·resolve·자식 인스턴스·자식 key 식별은 만들지 않는다. `Child(props)` 직접 호출은 자동 감지하지 않으므로 Hook 차단 보장 대상이 아니다.
+- 콜백 실행 자체는 금지하지 않는다. 자식 이벤트에 부모 setter를 연결할 수 있다. 렌더 도중 setter와 갱신 예약·실패 정책은 바꾸지 않는다.
+
+공개 타입은 네 오버로드다. 문자열 분기는 `VNode`, 함수 분기는 `VNode[]`를 반환한다.
+
+```ts
+h(tagName: string, props?: Record<string, unknown> | null, ...children: unknown[]): VNode
+h<P>(component: (props: P) => unknown, props: P): VNode[]
+h(component: (props: unknown) => unknown, props: undefined | null): VNode[]
+h(component: () => unknown): VNode[]
+```
+
+필수 props를 요구하는 함수는 생략·null·undefined·빈 객체로 호출할 수 없다. 빈 객체 대체는 런타임 규칙이며 필수 props 검사를 느슨하게 만들지 않는다. 내부 구현부의 `(props: never) => unknown`과 `resolvedProps as never`는 이질적인 props 함수의 실행 처리를 내부로 제한한다. 공개 오버로드를 대신하는 사용자 타입이 아니다. `tests/unit/p2/h.types.ts`에서 반환 타입과 잘못된 호출의 컴파일 오류를 확인하며 이 파일은 실행하지 않는다. Hook 오류는 기존 `requireHookOwner`의 문구를 그대로 사용한다.
 
 ```text
 h(tagName, props, ...children)
@@ -192,7 +227,7 @@ h(tagName, props, ...children)
 └─ events가 비어 있지 않을 때만 node.events = events
 ```
 
-props 분류 결과:
+문자열 분기의 props 분류 결과(함수 props에는 적용하지 않음):
 
 | 순서 | 판정 | 저장 위치 | 규칙 |
 | --- | --- | --- | --- |
@@ -200,7 +235,7 @@ props 분류 결과:
 | 2 | `propertySchema[tagName]`에 포함 | `properties[name]` | 값 타입을 바꾸지 않는다. `INPUT`의 `value`·`checked`·`indeterminate`, `TEXTAREA`·`SELECT`의 `value`, `OPTION`의 `selected` |
 | 3 | 그 밖 | `attributes[]` | `className`→`class`. `null`·`undefined`·`false` 생략, `true`→`""`, 객체는 오류, 그 밖은 `String(value)` |
 
-children 규칙:
+문자열 분기의 children 규칙(함수 분기는 여분 인자를 받지 않음):
 
 | 입력 | 결과 |
 | --- | --- |
@@ -270,7 +305,7 @@ sequenceDiagram
 
 ## 6. 실패 경계
 
-실패 지점마다 "실제 DOM이 바뀌었는가", "Hook 슬롯과 현재 VDOM이 어느 시점인가", "호출자에게 무엇이 전파되는가"가 다르다. 아래 표는 `src/component/index.ts`의 현재 구현 순서를 기준으로 한다.
+실패 지점마다 "실제 DOM이 바뀌었는가", "Hook 슬롯과 현재 VDOM이 어느 시점인가", "호출자에게 무엇이 전파되는가"가 다르다. 아래 표는 기존 구현 순서와 승인된 자식 경계 추가 계약을 기준으로 한다. 자식 실행·정규화·Hook 오류는 기존 render 오류 경계에 속하며 별도 복구 정책을 추가하지 않는다(ERR-03).
 
 | 단계 | 실패 지점 | 실제 DOM | Hook 슬롯·현재 VDOM | 전파·후속 |
 | --- | --- | --- | --- | --- |
@@ -334,6 +369,7 @@ applyPatch 실패
 | 이름 | 경계 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- | --- |
 | `h` | 공개 | `tagName: string`, `props?: Record<string, unknown> \| null`, `...children: unknown[]` | `VNode` | 태그·props·children 정규화, Text VNode 변환 | Component render, 정적 VNode 생성 |
+| `h` 함수 분기 | 공개 | `Child`, 그 함수가 요구하는 props; 생략/null의 런타임 값은 빈 객체 | `VNode[]` | 여분 인자 선거부, 소유자 null에서 즉시 실행·정규화, finally 직전 소유자 복원 | 자식 합성 |
 | `startApp` | 공개 | `component: () => unknown`, `container: Element` | `void` | container 검증·등록, `FunctionComponent.mount()` | 앱 시작 1회 |
 | `useState` | 공개 | `initialValue: T` | `[T, setter]` | State 슬롯 조회·생성, 안정된 setter | Component 실행 중 |
 | `useMemo` | 공개 | `calculate: () => T`, `deps: readonly unknown[]` | `T` | deps 비교 후 캐시 또는 재계산 | Component 실행 중 |
@@ -350,6 +386,7 @@ applyPatch 실패
 | `restorePatchFailure` | 내부 | `instance`, `previousRoot` | `void` | 화면·훅 슬롯 복원, 예약 플래그 해제 | `applyPatch` catch |
 | `restoreLastCommittedRoot` | 내부 | `instance`, `previousRoot` | `void` | 마지막 성공 VDOM으로 컨테이너 재생성, 복원 오류 무시 | `restorePatchFailure` |
 | `renderComponent` | 내부 | `instance`, `phase` | `VNode[]` | Hook 문맥 설정·Component 실행·개수 검사·반환값 정규화 | `mount`·`update` |
+| `renderChild` | 내부(index.ts) | `component: (props: never) => unknown`, `props: unknown`, `children: unknown[]` | `VNode[]` | 여분 인자 선거부, 소유자 null에서 자식 실행·기존 반환 정규화, finally 직전 소유자 복원 | 공개 h의 함수 분기 |
 | `createVRoot` | 내부 | `nodes: VNode[]` | `VRoot` | `dom: null`인 비교 루트 생성 | `renderComponent` 직후 |
 | `scheduleUpdate` | 내부 | `instance` | `void` | 인스턴스별 1회 microtask 예약 | 변경된 setter |
 | `runEffects` | 내부 | `instance` | `void` | effect 슬롯을 호출 순서대로 실행 | `mount`·`update`의 commit 뒤 |
@@ -358,9 +395,9 @@ applyPatch 실패
 
 | 이름 | 경계 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- | --- |
-| `beginHooks` | 내부 | `instance`, `phase` | `void` | 소유자 설정, `cursor=0`, phase 기록 | 모든 render 시작 |
+| `beginHooks` | 내부 | `instance`, `phase` | `void` | 소유자 설정, `cursor=0`, phase 기록 | 루트 render 시작만; 자식에는 호출하지 않음 |
 | `endHooks` | 내부 | 없음 | `void` | `activeHookOwner` 해제 | `renderComponent`의 `finally` |
-| `requireHookOwner` | 내부 | `hookName` | `FunctionComponent` | 컴포넌트 실행 밖 Hook 호출 차단 | 모든 Hook 진입 |
+| `requireHookOwner` | 내부 | `hookName` | `FunctionComponent` | 루트 실행 밖 및 함수 h의 자식 실행·정규화 중 Hook 호출 차단 | 모든 Hook 진입 |
 | `claimHookSlot` | 내부 | `instance`, `kind`, `create` | `HookSlot` | cursor 위치 슬롯 조회·mount 생성·종류 검사 | 모든 Hook |
 | `assertHookCountConsumed` | 내부 | `instance`, `phase` | `void` | update에서 Hook 개수 감소 검사 | `renderComponent` |
 | `createStateHookSlot` | 내부 | `instance`, `initialValue` | `StateHookSlot` | 값·자기 슬롯을 기억하는 setter 생성 | mount의 `useState` |
@@ -386,7 +423,7 @@ applyPatch 실패
 
 | 이름 | 경계 | 입력 | 출력 | 역할 | 호출 시점 |
 | --- | --- | --- | --- | --- | --- |
-| `normalizeComponentResult` | 내부 | `value: unknown` | `VNode[]` | 배열 펼침·빈 값 제외·VNode 검사, 원시값 오류 | `renderComponent` |
+| `normalizeComponentResult` | 내부 | `value: unknown` | `VNode[]` | 배열 펼침·빈 값 제외·VNode 검사, 원시값 오류 | 루트 `renderComponent` 및 공개 h 함수 분기의 자식 실행 직후 |
 | `normalizeTagName` | 내부 | `value: unknown` | `string` | 문자열 검사·trim·빈 값 검사·대문자화 | `h` |
 | `classifyProps` | 내부 | `tagName`, `props` | `{ attributes, properties, events }` | props 전체 분류 | `h` |
 | `classifyProp` | 내부 | `classified`, `tagName`, `name`, `value` | `void` | 이벤트 → property → attribute 순 판정 | `classifyProps` |
@@ -425,11 +462,12 @@ applyPatch 실패
 | 흐름 | 테스트 ID | 테스트 파일 |
 | --- | --- | --- |
 | 최초 표시·container 경계 | INIT-01–INIT-04 | `tests/integration/p2/app.test.ts` |
-| `h()`·정규화 | H-01–H-08 | `tests/unit/p2/h.test.ts` |
-| Hook 슬롯·State·Memo | HOOK-01–HOOK-05, HOOK-07–HOOK-09 | `tests/unit/p2/hooks.test.ts` |
+| `h()`·정규화 | H-01–H-11 | `tests/unit/p2/h.test.ts` |
+| h의 필수 props·여분 인자·반환 타입(컴파일 전용) | H-09 | `tests/unit/p2/h.types.ts` — 실행 0개 |
+| Hook 슬롯·State·Memo·자식 소유자 경계 | HOOK-01–HOOK-05, HOOK-07–HOOK-13 | `tests/unit/p2/hooks.test.ts` |
 | Effect·cleanup | HOOK-06, EFF-01 | `tests/unit/p2/hooks.test.ts` |
 | 갱신·이벤트 동기화 | UPD-01–UPD-06 | `tests/integration/p2/app.test.ts` |
-| 실패 경계 | ERR-01·ERR-02 | `tests/integration/p2/errors.test.ts` |
+| 실패 경계 | ERR-01–ERR-03 | `tests/integration/p2/errors.test.ts` |
 | 사용자 흐름 | FLOW-01–FLOW-03 | `tests/integration/p2/app.test.ts` |
 
-테스트 명세 ID는 33개이고, 같은 ID를 여러 입력·시나리오로 나눈 실행 단위와 명세 밖 보강 테스트를 포함한 실제 실행 단위는 77개다. 실행 결과와 파일별 수치는 [p2_test_boards.md](p2_test_boards.md)를 따른다.
+현재 테스트 명세 ID는 41개이고 진행표 41행 모두 통과다. Phase 2 실행은 100개(h 26·hooks 50·app 16·errors 8), 전체는 26개 파일 293개(Phase 1 193개 포함) 통과다. 타입 전용 h.types.ts는 실행 수에 포함하지 않는다. 이전 명세 ID 33개·Phase 2 실행 77개·전체 270개는 변경 전 기준선이다. 상세 증거와 검토·빌드 기록은 [진행표](p2_test_boards.md)와 [계획 실행 기록](p2_component_boundary_plan.md)을 따른다. jsdom 검증과 빌드 성공을 사용자 브라우저 실화면 검증으로 확대하지 않는다.

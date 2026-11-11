@@ -1,14 +1,16 @@
 /**
  * Phase 2 공개 경계.
- * 아직 구현하지 않은 Hook은 호출 시 오류를 던져 테스트 실패 원인을 드러낸다.
+ * 공개 h()는 문자열이면 요소 VNode를, 함수면 자식을 즉시 실행한 VNode[]를 반환한다.
  */
 import { diff } from '../vdom/diff';
 import { syncEvents } from '../vdom/events';
 import { applyPatch, renderChildren } from '../vdom/patch';
 import type { DiffCommand, VNode, VRoot } from '../vdom/types';
-import { describeValue, normalizeComponentResult } from './h';
-
-export { h } from './h';
+import {
+  h as createElementVNode,
+  describeValue,
+  normalizeComponentResult
+} from './h';
 
 type ComponentFunction = () => unknown;
 
@@ -55,6 +57,64 @@ type HookSlot = StateHookSlot | MemoHookSlot | EffectHookSlot;
  * 이전 실패의 흔적 위에 새 앱이 겹치기 때문이다.
  */
 const startedContainers = new WeakSet<Element>();
+
+export function h(
+  tagName: string,
+  props?: Record<string, unknown> | null,
+  ...children: unknown[]
+): VNode;
+export function h<P>(component: (props: P) => unknown, props: P): VNode[];
+export function h(
+  component: (props: unknown) => unknown,
+  props: undefined | null
+): VNode[];
+export function h(component: () => unknown): VNode[];
+export function h(
+  type: string | ((props: never) => unknown),
+  props?: unknown,
+  ...children: unknown[]
+): VNode | VNode[] {
+  if (typeof type === 'string') {
+    return createElementVNode(
+      type,
+      props as Record<string, unknown> | null | undefined,
+      ...children
+    );
+  }
+
+  if (typeof type === 'function') {
+    return renderChild(type, props, children);
+  }
+
+  throw new Error('h의 첫 인자는 문자열 태그 또는 컴포넌트 함수여야 합니다');
+}
+
+/**
+ * 함수 분기의 자식 실행 경계. 실행과 반환 정규화 전체에서 Hook 소유자를 비워
+ * 자식이 루트 슬롯을 빌리지 못하게 하고, finally에서 직전 소유자를 복원한다.
+ * beginHooks/endHooks는 쓰지 않으므로 루트 cursor·phase·슬롯은 건드리지 않는다.
+ */
+function renderChild(
+  component: (props: never) => unknown,
+  props: unknown,
+  children: unknown[]
+): VNode[] {
+  if (children.length > 0) {
+    throw new Error('컴포넌트 h()는 props 뒤에 자식 인자를 받지 않습니다');
+  }
+
+  const previousOwner = activeHookOwner;
+  activeHookOwner = null;
+
+  try {
+    // 생략·undefined·null의 런타임 값은 빈 객체다. 필수 props의 타입 검증은
+    // 공개 h의 제네릭 overload가 담당하며 이 대체값으로 느슨해지지 않는다.
+    const resolvedProps = props ?? {};
+    return normalizeComponentResult(component(resolvedProps as never));
+  } finally {
+    activeHookOwner = previousOwner;
+  }
+}
 
 export function startApp(component: ComponentFunction, container: Element): void {
   assertStartContainer(container);

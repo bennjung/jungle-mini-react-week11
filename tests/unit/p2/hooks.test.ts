@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { h, startApp, useEffect, useMemo, useState } from '../../../src/component';
+import type { VNode } from '../../../src/vdom/types';
 import {
   buttonByText,
   captureScheduledUpdates,
@@ -11,6 +12,31 @@ import {
 
 beforeEach(resetBody);
 afterEach(resetBody);
+
+/**
+ * 루트 실행이 끝난 뒤 세 Hook이 모두 거부되고, 거부 과정에서 계산·효과가
+ * 실행되지 않았는지 확인한다. fixture 자체의 카운터는 각 테스트에서 따로 확인한다.
+ */
+function expectOutsideHooksRejected(): void {
+  let calculate = 0;
+  let effect = 0;
+
+  expect(() => useState(0)).toThrow(/useState/);
+  expect(() =>
+    useMemo(() => {
+      calculate += 1;
+      return 1;
+    }, [])
+  ).toThrow(/useMemo/);
+  expect(() =>
+    useEffect(() => {
+      effect += 1;
+    }, [])
+  ).toThrow(/useEffect/);
+
+  expect(calculate).toBe(0);
+  expect(effect).toBe(0);
+}
 
 describe('HOOK-01 useState가 mount에서 기록을 만들고 update에서 값과 setter를 유지한다', () => {
   it('클릭마다 값이 바뀌고 setter 참조는 유지된다', async () => {
@@ -577,6 +603,637 @@ describe('HOOK-09 같은 값을 넣는 setter는 갱신을 예약하지 않는�
     await flushUpdates();
     expect(renders).toBe(3);
   });
+});
+
+describe('HOOK-10 자식 실행 중 세 Hook을 모두 거부한다', () => {
+  it('Child의 useState는 진입 1회 뒤 거부되고 이후 문장은 실행되지 않는다', () => {
+    const counts = { entered: 0, after: 0, calculate: 0, effect: 0 };
+
+    function Child(_props: unknown): null {
+      counts.entered += 1;
+      useState(0);
+      counts.after += 1;
+      return null;
+    }
+
+    function App(): VNode[] {
+      useState('root');
+      return h(Child, {});
+    }
+
+    const container = createContainer();
+    expect(() => startApp(App, container)).toThrow();
+    expect(counts.entered).toBe(1);
+    expect(counts.after).toBe(0);
+    expect(container.childNodes).toHaveLength(0);
+
+    expect(counts.calculate).toBe(0);
+    expect(counts.effect).toBe(0);
+    expectOutsideHooksRejected();
+  });
+
+  it('Child의 useMemo는 진입 1회 뒤 거부되고 계산은 실행되지 않는다', () => {
+    const counts = { entered: 0, after: 0, calculate: 0, effect: 0 };
+
+    function Child(_props: unknown): null {
+      counts.entered += 1;
+      useMemo(() => {
+        counts.calculate += 1;
+        return 1;
+      }, []);
+      counts.after += 1;
+      return null;
+    }
+
+    function App(): VNode[] {
+      useState('root');
+      return h(Child, {});
+    }
+
+    const container = createContainer();
+    expect(() => startApp(App, container)).toThrow();
+    expect(counts.entered).toBe(1);
+    expect(counts.after).toBe(0);
+    expect(counts.calculate).toBe(0);
+    expect(container.childNodes).toHaveLength(0);
+
+    expect(counts.calculate).toBe(0);
+    expect(counts.effect).toBe(0);
+    expectOutsideHooksRejected();
+  });
+
+  it('Child의 useEffect는 진입 1회 뒤 거부되고 효과는 실행되지 않는다', () => {
+    const counts = { entered: 0, after: 0, calculate: 0, effect: 0 };
+
+    function Child(_props: unknown): null {
+      counts.entered += 1;
+      useEffect(() => {
+        counts.effect += 1;
+      }, []);
+      counts.after += 1;
+      return null;
+    }
+
+    function App(): VNode[] {
+      useState('root');
+      return h(Child, {});
+    }
+
+    const container = createContainer();
+    expect(() => startApp(App, container)).toThrow();
+    expect(counts.entered).toBe(1);
+    expect(counts.after).toBe(0);
+    expect(counts.effect).toBe(0);
+    expect(container.childNodes).toHaveLength(0);
+
+    expect(counts.calculate).toBe(0);
+    expect(counts.effect).toBe(0);
+    expectOutsideHooksRejected();
+  });
+});
+
+describe('HOOK-11 정상 자식 뒤 부모 Hook 문맥을 복원한다', () => {
+  it('자식 앞뒤의 두 State가 순서대로 갱신되고 setter 참조가 유지된다', async () => {
+    let childRuns = 0;
+    let setFirstOutside: ((next: string) => void) | null = null;
+    let setSecondOutside: ((next: string) => void) | null = null;
+    const firstSetters: unknown[] = [];
+    const secondSetters: unknown[] = [];
+
+    function Child(_props: unknown): VNode {
+      childRuns += 1;
+      return h('em', {}, 'child');
+    }
+
+    function App(): VNode {
+      const [first, setFirst] = useState('A');
+      const child = h(Child, {});
+      const [second, setSecond] = useState('B');
+
+      firstSetters.push(setFirst);
+      secondSetters.push(setSecond);
+      setFirstOutside = setFirst;
+      setSecondOutside = setSecond;
+
+      return h(
+        'section',
+        {},
+        h('span', {}, first),
+        h('span', {}, second),
+        child
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    expect(container.textContent).toBe('ABchild');
+    expect(childRuns).toBe(1);
+    expectOutsideHooksRejected();
+
+    setSecondOutside!('B2');
+    await flushUpdates();
+    expect(container.textContent).toBe('AB2child');
+    expect(childRuns).toBe(2);
+    expectOutsideHooksRejected();
+
+    setFirstOutside!('A2');
+    await flushUpdates();
+    expect(container.textContent).toBe('A2B2child');
+    expect(childRuns).toBe(3);
+    expectOutsideHooksRejected();
+
+    const firstReference = firstSetters[0];
+    const secondReference = secondSetters[0];
+    expect(firstSetters).toHaveLength(3);
+    expect(secondSetters).toHaveLength(3);
+    expect(firstSetters.every((setter) => setter === firstReference)).toBe(true);
+    expect(secondSetters.every((setter) => setter === secondReference)).toBe(true);
+    expect(firstReference).not.toBe(secondReference);
+  });
+});
+
+describe('HOOK-12 중첩 자식은 직전의 빈 소유자로 복원한다', () => {
+  type Counts = { after: number; calculate: number; effect: number };
+
+  function startNestedChildHook(
+    makeChildHook: (counts: Counts) => () => void
+  ) {
+    const log: string[] = [];
+    const counts: Counts = { after: 0, calculate: 0, effect: 0 };
+    const firstSetters: unknown[] = [];
+    const secondSetters: unknown[] = [];
+    let childRuns = 0;
+    let grandchildRuns = 0;
+    let setSecondOutside: ((next: string) => void) | null = null;
+
+    function Grandchild(_props: unknown): null {
+      grandchildRuns += 1;
+      return null;
+    }
+
+    function Child(_props: unknown): null {
+      childRuns += 1;
+      log.push('child');
+      h(Grandchild, {});
+      log.push('grandchild-end');
+
+      try {
+        makeChildHook(counts)();
+        // Hook 다음 문장은 거부되면 실행되지 않아야 한다.
+        counts.after += 1;
+      } catch {
+        log.push('caught');
+      }
+
+      return null;
+    }
+
+    function App(): VNode {
+      const [first, setFirst] = useState('A');
+      const child = h(Child, {});
+      const [second, setSecond] = useState('B');
+
+      firstSetters.push(setFirst);
+      secondSetters.push(setSecond);
+      setSecondOutside = setSecond;
+
+      return h(
+        'section',
+        {},
+        h('span', {}, first),
+        h('span', {}, second),
+        child
+      );
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    return {
+      container,
+      log,
+      counts,
+      firstSetters,
+      secondSetters,
+      get childRuns() {
+        return childRuns;
+      },
+      get grandchildRuns() {
+        return grandchildRuns;
+      },
+      setSecond: (next: string) => setSecondOutside!(next)
+    };
+  }
+
+  it('useState 자식은 손자 종료 뒤에도 거부되고 루트 State는 정상 갱신된다', async () => {
+    const fixture = startNestedChildHook(() => () => useState(0));
+
+    expect(fixture.container.textContent).toBe('AB');
+    expect(fixture.log).toEqual(['child', 'grandchild-end', 'caught']);
+    expect(fixture.childRuns).toBe(1);
+    expect(fixture.grandchildRuns).toBe(1);
+    expect(fixture.counts.after).toBe(0);
+    expectOutsideHooksRejected();
+
+    fixture.setSecond('B2');
+    await flushUpdates();
+
+    expect(fixture.container.textContent).toBe('AB2');
+    expect(fixture.log).toEqual([
+      'child',
+      'grandchild-end',
+      'caught',
+      'child',
+      'grandchild-end',
+      'caught'
+    ]);
+    expect(fixture.childRuns).toBe(2);
+    expect(fixture.grandchildRuns).toBe(2);
+    expect(fixture.counts.after).toBe(0);
+    expect(fixture.firstSetters.every((setter) => setter === fixture.firstSetters[0])).toBe(true);
+    expect(
+      fixture.secondSetters.every((setter) => setter === fixture.secondSetters[0])
+    ).toBe(true);
+    expectOutsideHooksRejected();
+  });
+
+  it('useMemo 자식은 손자 종료 뒤에도 거부되고 계산은 0회다', async () => {
+    const fixture = startNestedChildHook(
+      (counts) => () => {
+        useMemo(() => {
+          counts.calculate += 1;
+          return 1;
+        }, []);
+      }
+    );
+
+    expect(fixture.container.textContent).toBe('AB');
+    expect(fixture.log).toEqual(['child', 'grandchild-end', 'caught']);
+    expect(fixture.childRuns).toBe(1);
+    expect(fixture.grandchildRuns).toBe(1);
+    expect(fixture.counts.calculate).toBe(0);
+    expect(fixture.counts.after).toBe(0);
+    expectOutsideHooksRejected();
+
+    fixture.setSecond('B2');
+    await flushUpdates();
+
+    expect(fixture.container.textContent).toBe('AB2');
+    expect(fixture.log).toEqual([
+      'child',
+      'grandchild-end',
+      'caught',
+      'child',
+      'grandchild-end',
+      'caught'
+    ]);
+    expect(fixture.childRuns).toBe(2);
+    expect(fixture.grandchildRuns).toBe(2);
+    expect(fixture.counts.calculate).toBe(0);
+    expect(fixture.counts.after).toBe(0);
+    expect(fixture.firstSetters.every((setter) => setter === fixture.firstSetters[0])).toBe(true);
+    expect(
+      fixture.secondSetters.every((setter) => setter === fixture.secondSetters[0])
+    ).toBe(true);
+    expectOutsideHooksRejected();
+  });
+
+  it('useEffect 자식은 손자 종료 뒤에도 거부되고 효과는 0회다', async () => {
+    const fixture = startNestedChildHook(
+      (counts) => () => {
+        useEffect(() => {
+          counts.effect += 1;
+        }, []);
+      }
+    );
+
+    expect(fixture.container.textContent).toBe('AB');
+    expect(fixture.log).toEqual(['child', 'grandchild-end', 'caught']);
+    expect(fixture.childRuns).toBe(1);
+    expect(fixture.grandchildRuns).toBe(1);
+    expect(fixture.counts.effect).toBe(0);
+    expect(fixture.counts.after).toBe(0);
+    expectOutsideHooksRejected();
+
+    fixture.setSecond('B2');
+    await flushUpdates();
+
+    expect(fixture.container.textContent).toBe('AB2');
+    expect(fixture.log).toEqual([
+      'child',
+      'grandchild-end',
+      'caught',
+      'child',
+      'grandchild-end',
+      'caught'
+    ]);
+    expect(fixture.childRuns).toBe(2);
+    expect(fixture.grandchildRuns).toBe(2);
+    expect(fixture.counts.effect).toBe(0);
+    expect(fixture.counts.after).toBe(0);
+    expect(fixture.firstSetters.every((setter) => setter === fixture.firstSetters[0])).toBe(true);
+    expect(
+      fixture.secondSetters.every((setter) => setter === fixture.secondSetters[0])
+    ).toBe(true);
+    expectOutsideHooksRejected();
+  });
+});
+
+describe('HOOK-13 오류 뒤에도 부모 문맥을 복원하고 슬롯을 오염시키지 않는다', () => {
+  type ChildFailureKind = 'throw' | 'bad-return' | 'state' | 'memo' | 'effect';
+
+  function startErrorFixture(kind: ChildFailureKind, failure: Error) {
+    const errors: unknown[] = [];
+    const counts = {
+      renders: 0,
+      childEntries: 0,
+      catches: 0,
+      after: 0,
+      calculate: 0,
+      effect: 0
+    };
+    const setterRefs: Array<{ first: unknown; second?: unknown }> = [];
+    let setFirstOutside: ((next: string) => void) | null = null;
+    let setSecondOutside: ((next: string) => void) | null = null;
+
+    function Child(_props: unknown): unknown {
+      counts.childEntries += 1;
+
+      if (kind === 'throw') throw failure;
+      if (kind === 'bad-return') return '잘못된 반환';
+
+      if (kind === 'state') {
+        useState(99);
+      } else if (kind === 'memo') {
+        useMemo(() => {
+          counts.calculate += 1;
+          return 1;
+        }, []);
+      } else {
+        useEffect(() => {
+          counts.effect += 1;
+        }, []);
+      }
+
+      // Hook 다음 문장은 거부되면 실행되지 않아야 한다.
+      counts.after += 1;
+      return null;
+    }
+
+    function App(): VNode {
+      counts.renders += 1;
+      const [first, setFirst] = useState('A');
+      setFirstOutside = setFirst;
+
+      try {
+        h(Child, {});
+      } catch (error) {
+        errors.push(error);
+        counts.catches += 1;
+      }
+
+      if (kind === 'memo') {
+        // useMemo를 시도한 자식과 다른 종류의 루트 Hook으로 슬롯 오염을 관찰한다.
+        const [second, setSecond] = useState('B');
+        setSecondOutside = setSecond;
+        setterRefs.push({ first: setFirst, second: setSecond });
+
+        return h(
+          'section',
+          {},
+          h('span', {}, first),
+          h('span', {}, second)
+        );
+      }
+
+      const memo = useMemo(() => `M:${first}`, [first]);
+      setterRefs.push({ first: setFirst });
+
+      return h('section', {}, h('span', {}, first), h('span', {}, memo));
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    return {
+      container,
+      errors,
+      counts,
+      setterRefs,
+      setFirst: (next: string) => setFirstOutside!(next),
+      setSecond: (next: string) => setSecondOutside!(next)
+    };
+  }
+
+  it.each(['throw', 'bad-return', 'state', 'memo', 'effect'] as const)(
+    '%s 오류는 catch 1회 뒤 루트 Hook과 갱신이 정상이다',
+    async (kind) => {
+    const failure = new Error('child-error');
+    const fixture = startErrorFixture(kind, failure);
+
+    expect(fixture.counts.childEntries).toBe(1);
+    expect(fixture.counts.catches).toBe(1);
+    expect(fixture.counts.after).toBe(0);
+    expect(fixture.counts.calculate).toBe(0);
+    expect(fixture.counts.effect).toBe(0);
+    expect(fixture.errors).toHaveLength(1);
+
+    if (kind === 'throw') expect(fixture.errors[0]).toBe(failure);
+    if (kind === 'bad-return') expect(String(fixture.errors[0])).toMatch(/반환값/);
+    if (kind === 'state') expect(String(fixture.errors[0])).toMatch(/useState/);
+    if (kind === 'memo') expect(String(fixture.errors[0])).toMatch(/useMemo/);
+    if (kind === 'effect') expect(String(fixture.errors[0])).toMatch(/useEffect/);
+
+    expect(fixture.container.textContent).toBe(kind === 'memo' ? 'AB' : 'AM:A');
+    expectOutsideHooksRejected();
+
+    fixture.setFirst('A2');
+    await flushUpdates();
+
+    if (kind === 'memo') {
+      // 첫 갱신의 중간 화면과 시점을 확인한 뒤 두 번째 State를 갱신한다.
+      expect(fixture.container.textContent).toBe('A2B');
+      expect(fixture.counts.childEntries).toBe(2);
+      expect(fixture.counts.catches).toBe(2);
+      expect(fixture.counts.calculate).toBe(0);
+      expect(fixture.counts.effect).toBe(0);
+      expectOutsideHooksRejected();
+
+      fixture.setSecond('B2');
+      await flushUpdates();
+      expect(fixture.container.textContent).toBe('A2B2');
+    } else {
+      expect(fixture.container.textContent).toBe('A2M:A2');
+    }
+
+    const expectedRenders = kind === 'memo' ? 3 : 2;
+    expect(fixture.counts.childEntries).toBe(expectedRenders);
+    expect(fixture.counts.catches).toBe(expectedRenders);
+    expect(fixture.counts.after).toBe(0);
+    expect(fixture.counts.calculate).toBe(0);
+    expect(fixture.counts.effect).toBe(0);
+    expect(
+      fixture.setterRefs.every((refs) => refs.first === fixture.setterRefs[0]?.first)
+    ).toBe(true);
+
+    if (kind === 'memo') {
+      expect(
+        fixture.setterRefs.every((refs) => refs.second === fixture.setterRefs[0]?.second)
+      ).toBe(true);
+    }
+
+    expectOutsideHooksRejected();
+  });
+
+  type GetterKind = 'state' | 'memo' | 'effect';
+
+  function startGetterFixture(kind: GetterKind) {
+    const errors: unknown[] = [];
+    const counts = {
+      renders: 0,
+      getterEntries: 0,
+      catches: 0,
+      after: 0,
+      calculate: 0,
+      effect: 0
+    };
+    const setterRefs: Array<{ first: unknown; second?: unknown }> = [];
+    let setFirstOutside: ((next: string) => void) | null = null;
+    let setSecondOutside: ((next: string) => void) | null = null;
+
+    function Child(_props: unknown): unknown {
+      const paragraph = h('p', {}, 'A');
+      const values: unknown[] = [paragraph];
+
+      Object.defineProperty(values, 0, {
+        enumerable: true,
+        configurable: true,
+        get() {
+          counts.getterEntries += 1;
+
+          if (kind === 'state') {
+            useState(0);
+          } else if (kind === 'memo') {
+            useMemo(() => {
+              counts.calculate += 1;
+              return 1;
+            }, []);
+          } else {
+            useEffect(() => {
+              counts.effect += 1;
+            }, []);
+          }
+
+          counts.after += 1;
+          return paragraph;
+        }
+      });
+
+      return values;
+    }
+
+    function App(): VNode {
+      counts.renders += 1;
+      const [first, setFirst] = useState('A');
+      setFirstOutside = setFirst;
+
+      try {
+        h(Child, {});
+      } catch (error) {
+        errors.push(error);
+        counts.catches += 1;
+      }
+
+      if (kind === 'memo') {
+        const [second, setSecond] = useState('B');
+        setSecondOutside = setSecond;
+        setterRefs.push({ first: setFirst, second: setSecond });
+
+        return h(
+          'section',
+          {},
+          h('span', {}, first),
+          h('span', {}, second)
+        );
+      }
+
+      const memo = useMemo(() => `M:${first}`, [first]);
+      setterRefs.push({ first: setFirst });
+
+      return h('section', {}, h('span', {}, first), h('span', {}, memo));
+    }
+
+    const container = createContainer();
+    startApp(App, container);
+
+    return {
+      container,
+      errors,
+      counts,
+      setterRefs,
+      setFirst: (next: string) => setFirstOutside!(next),
+      setSecond: (next: string) => setSecondOutside!(next)
+    };
+  }
+
+  it.each(['state', 'memo', 'effect'] as const)(
+    '반환 정규화 getter의 %s도 차단되고 루트 Hook은 재사용된다',
+    async (kind) => {
+      const fixture = startGetterFixture(kind);
+
+      expect(fixture.counts.getterEntries).toBe(1);
+      expect(fixture.counts.catches).toBe(1);
+      expect(fixture.counts.after).toBe(0);
+      expect(fixture.counts.calculate).toBe(0);
+      expect(fixture.counts.effect).toBe(0);
+      expect(fixture.errors).toHaveLength(1);
+      const hookName =
+        kind === 'state' ? 'useState' : kind === 'memo' ? 'useMemo' : 'useEffect';
+      expect(String(fixture.errors[0])).toMatch(new RegExp(hookName));
+      expect(fixture.container.textContent).toBe(kind === 'memo' ? 'AB' : 'AM:A');
+      expectOutsideHooksRejected();
+
+      fixture.setFirst('A2');
+      await flushUpdates();
+
+      expect(fixture.container.textContent).toBe(kind === 'memo' ? 'A2B' : 'A2M:A2');
+      expect(fixture.counts.getterEntries).toBe(2);
+      expect(fixture.counts.catches).toBe(2);
+      expect(fixture.counts.after).toBe(0);
+      expectOutcomeCounts(fixture.counts);
+      expect(
+        fixture.setterRefs.every((refs) => refs.first === fixture.setterRefs[0]?.first)
+      ).toBe(true);
+      expectOutsideHooksRejected();
+
+      if (kind === 'memo') {
+        // useMemo 오용 입력도 일반 오류 fixture처럼 두 번째 State까지 갱신한다.
+        fixture.setSecond('B2');
+        await flushUpdates();
+
+        expect(fixture.container.textContent).toBe('A2B2');
+        expect(fixture.counts.getterEntries).toBe(3);
+        expect(fixture.counts.catches).toBe(3);
+        expect(fixture.counts.after).toBe(0);
+        expectOutcomeCounts(fixture.counts);
+        expect(
+          fixture.setterRefs.every(
+            (refs) => refs.second === fixture.setterRefs[0]?.second
+          )
+        ).toBe(true);
+        expectOutsideHooksRejected();
+      }
+    }
+  );
+
+  function expectOutcomeCounts(counts: {
+    calculate: number;
+    effect: number;
+  }): void {
+    expect(counts.calculate).toBe(0);
+    expect(counts.effect).toBe(0);
+  }
 });
 
 describe('EFF-01 의존성이 바뀌면 이전 cleanup이 새 effect보다 먼저 실행된다', () => {
