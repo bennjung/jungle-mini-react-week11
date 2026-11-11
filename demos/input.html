@@ -1,0 +1,190 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>입력 검증 — 커서·한글 조합 보존</title>
+    <link rel="stylesheet" href="/src/styles/phase2.css" />
+    <style>
+      /* phase2.css를 그대로 쓰고, 이 화면에만 필요한 최소 유틸리티만 둔다. */
+      .app--observe {
+        padding-top: 0;
+      }
+
+      .field {
+        display: grid;
+        gap: 6px;
+        margin-top: 10px;
+      }
+
+      .field__label {
+        color: var(--muted);
+        font-size: 0.9rem;
+      }
+
+      .field__input {
+        width: 100%;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel-soft);
+        color: var(--text);
+        font: inherit;
+      }
+
+      .meta {
+        margin: 8px 0 0;
+        color: var(--muted);
+        font-size: 0.86rem;
+      }
+
+      .meta--mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        overflow-wrap: anywhere;
+      }
+
+      .meta--warn {
+        color: #ffb08a;
+      }
+
+      .readout {
+        display: grid;
+        grid-template-columns: max-content minmax(0, 1fr);
+        gap: 6px 16px;
+        margin: 14px 0 0;
+      }
+
+      .readout dt {
+        color: var(--muted);
+        font-size: 0.82rem;
+      }
+
+      .readout dd {
+        margin: 0;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.84rem;
+        overflow-wrap: anywhere;
+      }
+
+      .toolbar {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-top: 16px;
+      }
+
+      .log {
+        display: grid;
+        gap: 5px;
+        max-height: 280px;
+        margin: 12px 0 0;
+        padding: 0;
+        overflow: auto;
+        list-style: none;
+        font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+        font-size: 0.76rem;
+        line-height: 1.45;
+        color: var(--muted);
+      }
+
+      .log li {
+        padding-bottom: 5px;
+        border-bottom: 1px dashed var(--border);
+        overflow-wrap: anywhere;
+      }
+
+      @media (max-width: 720px) {
+        .readout {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 엔진 영역: startApp이 이 컨테이너의 자식을 전부 교체한다. -->
+    <div id="engine-root"></div>
+
+    <!-- 관찰 패널: 엔진 컨테이너 밖에 두어 엔진 렌더와 분리한다. -->
+    <main class="app app--observe">
+      <section class="panel">
+        <h2 class="panel__title">비교군: 브라우저 기본 input (엔진 미사용)</h2>
+        <p class="meta">
+          엔진을 거치지 않는 순수 브라우저 input입니다. 같은 관찰 리스너를 붙여
+          커서·조합 동작의 기준선으로 비교합니다.
+        </p>
+        <label class="field" for="native-input">
+          <span class="field__label">브라우저 기본 입력</span>
+          <input
+            id="native-input"
+            class="field__input"
+            type="text"
+            value="native baseline"
+            autocomplete="off"
+            spellcheck="false"
+          />
+        </label>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel__title">관찰 패널 (엔진 외부 · 관찰 전용)</h2>
+        <p class="meta">
+          엔진의 이벤트 prop이 아니라 앱 외부에서 input 요소에 직접
+          <code>addEventListener</code>로 붙인 리스너와 매 프레임 읽기로만
+          갱신합니다. 이 표시는 setState를 호출하지 않으므로 엔진 재렌더를
+          만들지 않습니다.
+        </p>
+
+        <div class="field">
+          <label class="field__label" for="observe-target">관찰 대상</label>
+          <select id="observe-target" class="field__input">
+            <option value="normal">엔진 일반 input</option>
+            <option value="transform">엔진 변환 input</option>
+            <option value="native">브라우저 기본 input</option>
+          </select>
+        </div>
+
+        <dl class="readout">
+          <dt>input.value</dt>
+          <dd id="ro-value">—</dd>
+          <dt>엔진 상태 값</dt>
+          <dd id="ro-state">—</dd>
+          <dt>selection (start / end / direction)</dt>
+          <dd id="ro-selection">—</dd>
+          <dt>조합 상태</dt>
+          <dd id="ro-composition">—</dd>
+          <dt>activeElement</dt>
+          <dd id="ro-active">—</dd>
+          <dt>엔진 렌더 횟수</dt>
+          <dd id="ro-renders">—</dd>
+        </dl>
+
+        <div class="toolbar">
+          <button class="button" type="button" id="select-range">
+            선택 영역 보조 (2–4, 값 변경 없음)
+          </button>
+          <button class="button" type="button" id="clear-log">로그 지우기</button>
+          <button class="button button--primary" type="button" id="reload">
+            초기화 (새로고침)
+          </button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel__title">이벤트 로그 (최근 40개)</h2>
+        <p class="meta">
+          compositionstart / compositionupdate / compositionend / input과,
+          input 직후 다음 프레임의 커서 점검을 기록합니다. 이 페이지는
+          composition 이벤트를 자동으로 dispatch하지 않습니다.
+        </p>
+        <ol class="log" id="event-log"></ol>
+      </section>
+
+      <footer class="footer">
+        실제 한글 IME 조합 입력은 사람이 직접 수행해야 검증됩니다. 자동으로
+        발생시킨 이벤트는 실제 IME 재현이 아닙니다.
+      </footer>
+    </main>
+
+    <script type="module" src="/demos/input.ts"></script>
+  </body>
+</html>

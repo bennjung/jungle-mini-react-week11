@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>syncEvents 실패 후 DOM·VDOM 불일치 재현</title>
+    <link rel="stylesheet" href="/src/styles/phase2.css" />
+    <style>
+      .log {
+        max-height: 280px;
+        margin: 0;
+        overflow: auto;
+        color: var(--muted);
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 0.8rem;
+        line-height: 1.6;
+        white-space: pre-wrap;
+      }
+    </style>
+  </head>
+  <body>
+    <main id="app"></main>
+
+    <section class="app" style="padding-top: 0">
+      <section class="panel">
+        <h2 class="panel__title">검증 · 실제 DOM 관찰</h2>
+        <p class="counter__hint">
+          아래 값은 화면에 보이는 DOM을 직접 읽은 결과입니다. 기대값은 마지막으로
+          렌더링을 요청한 단계 값을 기준으로 계산합니다. 값이 다르면 붉게
+          표시합니다.
+        </p>
+        <div class="stats" id="probe-rows"></div>
+        <p class="counter__hint" id="probe-verdict"></p>
+        <p class="counter__hint" id="probe-target-result"></p>
+        <p class="counter__hint" id="probe-stale-result"></p>
+        <div class="buttons">
+          <button class="button" id="probe-dom" type="button">DOM 검사</button>
+          <button class="button" id="probe-target" type="button">
+            이벤트 대상 클릭
+          </button>
+          <button class="button" id="probe-stale" type="button">
+            2단계 전용 버튼 클릭
+          </button>
+          <button class="button" id="reload" type="button">새로고침</button>
+        </div>
+      </section>
+
+      <section class="panel">
+        <h2 class="panel__title">오류·효과 로그</h2>
+        <pre class="log" id="log"></pre>
+      </section>
+    </section>
+
+    <script type="module" src="/demos/events.ts"></script>
+  </body>
+</html>

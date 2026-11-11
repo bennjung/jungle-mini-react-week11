@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="ko">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>SELECT 옵션 추가 + 값 변경 재현</title>
+    <link rel="stylesheet" href="/src/styles/phase2.css" />
+    <style>
+      /* 이 페이지 전용 최소 스타일. 기존 phase2.css의 색·패널·버튼을 그대로 쓴다. */
+      .observation {
+        width: min(980px, calc(100% - 40px));
+        margin: 0 auto 64px;
+      }
+
+      .observation__note {
+        margin: 0 0 16px;
+        color: var(--muted);
+      }
+
+      .observation__group + .observation__group {
+        margin-top: 20px;
+      }
+
+      .observation__group-title {
+        margin: 0 0 10px;
+        font-size: 0.9rem;
+        color: var(--muted);
+      }
+
+      .observation__mono {
+        font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+        font-size: 1.05rem;
+        overflow-wrap: anywhere;
+      }
+
+      .observation__verdict {
+        margin: 20px 0 0;
+        padding: 14px 16px;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: var(--panel-soft);
+        font-weight: 700;
+      }
+
+      .observation__verdict[data-state="mismatch"] {
+        border-color: var(--accent);
+        background: var(--accent-soft);
+        color: var(--accent);
+      }
+
+      .observation__verdict[data-state="match"] {
+        color: #7ddc9a;
+      }
+
+      .observation__details {
+        margin: 14px 0 0;
+        padding: 14px 16px;
+        overflow-x: auto;
+        border: 1px solid var(--border);
+        border-radius: 12px;
+        background: #101216;
+        color: var(--muted);
+        font-size: 0.85rem;
+        white-space: pre-wrap;
+      }
+
+      .demo-select {
+        min-width: 180px;
+        padding: 10px 12px;
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        background: var(--panel-soft);
+        color: var(--text);
+        font: inherit;
+      }
+
+      .demo-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 12px;
+        align-items: center;
+        margin-top: 16px;
+      }
+
+      .demo-state {
+        margin: 12px 0 0;
+        color: var(--muted);
+      }
+
+      .demo-state strong {
+        color: var(--text);
+      }
+
+      @media (max-width: 720px) {
+        .observation {
+          width: min(100% - 28px, 980px);
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <!-- 엔진 앱: startApp이 이 안쪽만 렌더링·패치한다. -->
+    <div id="app"></div>
+
+    <!-- 관찰 영역: 엔진 앱(#app) 바깥의 별도 DOM. 읽기만 한다. -->
+    <section id="observation" class="panel observation" aria-live="polite">
+      <p class="eyebrow">Observation — 엔진 앱 바깥</p>
+      <h2 class="panel__title">기대 상태와 실제 SELECT DOM 비교</h2>
+      <p class="observation__note">
+        정상 조작 사례입니다. A가 선택된 상태에서 버튼 한 번으로 B 선택지를
+        추가하고 동시에 선택 상태를 B로 바꿉니다. 이 영역은 엔진 컨테이너
+        바깥에 있어 diff/patch 대상이 아니며, 값을 읽기만 합니다.
+      </p>
+
+      <div class="observation__group">
+        <h3 class="observation__group-title">기대 상태 (useState 값)</h3>
+        <div class="stats">
+          <article class="stat">
+            <span class="stat__label">state.selected</span>
+            <strong id="obs-expected-selected" class="stat__value observation__mono">-</strong>
+            <span class="stat__hint">선택되어야 하는 값</span>
+          </article>
+          <article class="stat">
+            <span class="stat__label">state.options</span>
+            <strong id="obs-expected-options" class="stat__value observation__mono">-</strong>
+            <span class="stat__hint">화면에 있어야 하는 선택지</span>
+          </article>
+          <article class="stat">
+            <span class="stat__label">기대 selectedIndex</span>
+            <strong id="obs-expected-index" class="stat__value observation__mono">-</strong>
+            <span class="stat__hint">options.indexOf(selected)</span>
+          </article>
+        </div>
+      </div>
+
+      <div class="observation__group">
+        <h3 class="observation__group-title">실제 DOM (commit 후 읽기)</h3>
+        <div class="stats">
+          <article class="stat">
+            <span class="stat__label">select.value</span>
+            <strong id="obs-actual-value" class="stat__value observation__mono">-</strong>
+            <span class="stat__hint">실제 DOM 프로퍼티</span>
+          </article>
+          <article class="stat">
+            <span class="stat__label">select.selectedIndex</span>
+            <strong id="obs-actual-index" class="stat__value observation__mono">-</strong>
+            <span class="stat__hint">-1이면 선택 없음</span>
+          </article>
+          <article class="stat">
+            <span class="stat__label">선택된 option 값</span>
+            <strong id="obs-actual-selected" class="stat__value observation__mono">-</strong>
+            <span class="stat__hint">selectedOptions</span>
+          </article>
+        </div>
+        <div class="stats" style="margin-top: 16px">
+          <article class="stat" style="grid-column: 1 / -1">
+            <span class="stat__label">select.options 값</span>
+            <strong id="obs-actual-options" class="stat__value observation__mono">-</strong>
+            <span class="stat__hint">DOM에 실제로 존재하는 option value 목록</span>
+          </article>
+        </div>
+      </div>
+
+      <p id="obs-verdict" class="observation__verdict">관찰 대기 중</p>
+      <pre id="obs-details" class="observation__details">아직 관찰하지 않았습니다.</pre>
+    </section>
+
+    <script type="module" src="/demos/select.ts"></script>
+  </body>
+</html>
